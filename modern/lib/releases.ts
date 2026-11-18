@@ -1,6 +1,7 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 // Add each published release here. The Updates page displays the latest five.
 export const releases:Release[]=[
+ {version:'1.0.1',date:'2026-11-17',title:'A distinct Standalone icon',changes:['The app header, browser tab, and installed app use a new icon. The header and Home Screen label identify this edition as Standalone.']},
  {version:'1.0.0',date:'2026-11-17',title:'Holocron Standalone',changes:['The workspace, card catalog, artwork, and Battle Lab run offline. Use full backups to move your workspace between devices.']},
  {version:'2.9.5',date:'2026-11-16',title:'Balanced logo spacing',changes:['Added comfortable padding around the home logo and centered the icon, title and subtitle on desktop and mobile.']},
  {version:'2.9.4',date:'2026-11-16',title:'High-visibility card highlights',changes:['Doubled outline thickness, added a strong inner halo, and replaced muted highlight colors with vivid colors matched to the legend.']},

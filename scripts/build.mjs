@@ -56,8 +56,8 @@ await vite.build({
 });
 
 }
-if (process.argv.includes('--shell-only')) { await buildShell(false); await cp(join(root, 'public/battle/ui.mjs'), join(output, 'battle/ui.mjs')); await writeJson(join(output, 'battle/cards.json'), battle); await import('./create-offline-manifest.mjs'); process.exit(0); }
-await buildShell(true);
+const shellOnly = process.argv.includes('--shell-only');
+await buildShell(!shellOnly);
 await mkdir(join(output, 'art'), {recursive: true});
 await mkdir(assetCache, {recursive:true});
 for (const file of await readdir(join(root, 'public'))) {
@@ -65,6 +65,10 @@ for (const file of await readdir(join(root, 'public'))) {
 }
 await writeJson(join(output, 'catalog.json'), catalog);
 await writeJson(join(output, 'battle/cards.json'), battle);
+if (shellOnly) {
+  await import('./create-offline-manifest.mjs');
+  process.exit(0);
+}
 
 async function sourceImage(hash, url) {
   const path = join(assetCache, hash + '.img');

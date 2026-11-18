@@ -4,7 +4,7 @@ import {readFile, readdir, writeFile} from 'node:fs/promises';
 const dist = new URL('../dist/', import.meta.url);
 const names = async path => (await readdir(new URL(path, dist))).sort();
 const shell = ['./','index.html','catalog.json','manifest.webmanifest',
-  'apple-touch-icon-v19.png','holocron-icon-v19.svg','holocron-icon-v19-192.png','holocron-icon-v19-512.png',
+  'standalone-icon-32.png','standalone-icon-180.png','standalone-icon-192.png','standalone-icon-512.png',
   ...(await names('assets/')).map(file=>'assets/'+file),
   ...(await names('battle/')).map(file=>'battle/'+file)];
 const art = (await names('art/')).map(file=>'art/'+file);

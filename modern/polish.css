@@ -36,3 +36,5 @@ dialog .detail-art{justify-content:flex-start;align-self:start;position:sticky;t
 .workspace-navigation .brand-icon{flex-shrink:0;width:44px;height:44px}
 .workspace-navigation .brand small{display:block;margin-top:5px;line-height:1.4;white-space:nowrap}
 @media(max-width:700px){.workspace-navigation .brand{padding:10px 6px;gap:6px;font-size:12px;letter-spacing:.4px;flex-shrink:1}.workspace-navigation .brand-icon{width:34px;height:34px}.workspace-navigation .brand small{font-size:5.5px;letter-spacing:.2px;margin-top:4px}}
+
+.workspace-navigation .brand img.standalone-icon{display:block;object-fit:cover;padding:0;border:0;border-radius:10px;background:#16193b;box-shadow:none}

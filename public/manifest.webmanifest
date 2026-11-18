@@ -1,6 +1,6 @@
 {
   "name": "Holocron Standalone",
-  "short_name": "Holocron",
+  "short_name": "Standalone",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
@@ -8,12 +8,12 @@
   "theme_color": "#091419",
   "icons": [
     {
-      "src": "./holocron-icon-v19-192.png",
+      "src": "./standalone-icon-192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "./holocron-icon-v19-512.png",
+      "src": "./standalone-icon-512.png",
       "sizes": "512x512",
       "type": "image/png"
     }
