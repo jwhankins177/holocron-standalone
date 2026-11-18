@@ -45,7 +45,7 @@ const server = createServer(async (request, response) => {
     'Content-Type':type,
     'Content-Length':info.size,
     'Cache-Control':extname(path)==='.webp'?'public, max-age=86400':'no-cache',
-    'Content-Security-Policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy':"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data: blob:; connect-src 'self' https: http://localhost:41732 http://127.0.0.1:41732; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options':'nosniff',
   });
   if (request.method === 'HEAD') return response.end();

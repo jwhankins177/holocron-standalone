@@ -9,6 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "start": "node server.mjs",
+    "start:sync": "node sync-server.mjs",
     "test": "node --import ./scripts/test-resolver.mjs --test tests/*.test.mjs"
   },
   "dependencies": {
