@@ -6,7 +6,7 @@ import Modal from './modal';
 import CardList,{CardArtButton} from './card-list';
 import {effectiveCollection,normalizeId,resolutionPreview,setCollectionResolution,type Card,type CollectionResolution,type Workspace} from '../lib/model';
 
-type Props={workspace:Workspace;cards:Card[];sourceId:string;onSave:(resolution:CollectionResolution|null)=>boolean;onDismiss:()=>void};
+type Props={workspace:Workspace;cards:Card[];sourceId:string;onSave:(resolution:CollectionResolution|null)=>boolean;onDelete:()=>boolean;onDismiss:()=>void};
 type Preview={workspace:Workspace;cards:Card[];resolution:CollectionResolution|null;impact:ReturnType<typeof resolutionPreview>;previous?:{id:string;before:{normal:number;foil:number};after:{normal:number;foil:number}}};
 const choices:{kind:CollectionResolution['kind'];title:string;description:string}[]=[
  {kind:'catalog',title:'Map to catalog',description:'Match an existing card or token.'},
@@ -19,7 +19,7 @@ const destination=(resolution:CollectionResolution|undefined,sourceId:string)=>r
 
 export default function CollectionResolver(props:Props){return <ResolverDialog key={props.sourceId} {...props}/>}
 
-function ResolverDialog({workspace,cards,sourceId,onSave,onDismiss}:Props){
+function ResolverDialog({workspace,cards,sourceId,onSave,onDelete,onDismiss}:Props){
  const saved=workspace.resolutions?.find(resolution=>resolution.sourceId===sourceId);
  const [kind,setKind]=useState<CollectionResolution['kind']>(saved?.kind||'catalog');
  const [query,setQuery]=useState(sourceId);
@@ -27,6 +27,7 @@ function ResolverDialog({workspace,cards,sourceId,onSave,onDismiss}:Props){
  const [correctedId,setCorrectedId]=useState(saved?.correctedId||'');
  const [name,setName]=useState(saved?.name||'');
  const [clearing,setClearing]=useState(false);
+ const [confirmDelete,setConfirmDelete]=useState(false);
  const [reviewed,setPreview]=useState<Preview|null>(null);
  const preview=reviewed?.workspace===workspace&&reviewed.cards===cards?reviewed:null;
  const [error,setError]=useState('');
@@ -69,6 +70,15 @@ function ResolverDialog({workspace,cards,sourceId,onSave,onDismiss}:Props){
  }
 
  return <Modal label={`Resolve collection row ${sourceId}`} onDismiss={onDismiss}>
+  {confirmDelete?<section className="modal">
+   <h2>Delete {sourceId} from your collection?</h2>
+   <p>This removes {sourceTotals.normal} normal and {sourceTotals.foil} foil copies from this imported ID and clears its saved decision.</p>
+   {error&&<p className="resolver-error" role="alert">{error}</p>}
+   <footer className="resolver-footer">
+    <button type="button" onClick={()=>{setConfirmDelete(false);setError('')}}>Keep item</button>
+    <button type="button" className="danger" onClick={()=>{if(!onDelete())setError('The item could not be deleted. Try again.')}}>Confirm deletion</button>
+   </footer>
+  </section>:
   <section className="modal collection-resolver" aria-labelledby={`${prefix}-title`}>
    <button type="button" className="close" onClick={onDismiss} aria-label="Close resolution without saving"><X size={20}/></button>
    <div className="eyebrow">COLLECTION RESOLUTION</div>
@@ -96,7 +106,7 @@ function ResolverDialog({workspace,cards,sourceId,onSave,onDismiss}:Props){
      <label htmlFor={`${prefix}-target`}>Catalog ID <span>(select above or enter an exact ID)</span></label>
      <input id={`${prefix}-target`} value={targetId} placeholder="Example: SOR_001" maxLength={80} spellCheck={false} onChange={event=>edit(()=>setTargetId(event.target.value))} aria-describedby={`${prefix}-target-help`}/>
      <p id={`${prefix}-target-help`} className={`resolver-help${selectedCard?' resolver-match':''}`}>{selectedCard?`Selected: ${selectedCard.name}${selectedCard.subtitle?` — ${selectedCard.subtitle}`:''} · ${selectedCard.id}`:'The destination must already exist in the catalog. No match is selected automatically.'}</p>
-    </div>:kind==='ignored'?<div className="resolver-explanation"><h3>Dismiss the warning without losing data</h3><p>This row stays in your collection and exports with its original ID and quantities. It will leave the unresolved list. You can revisit it under saved resolutions at any time.</p></div>:<div className="resolver-classify">
+    </div>:kind==='ignored'?<div className="resolver-explanation"><h3>Dismiss the warning without losing data</h3><p>This row stays in your collection and exports with its original ID and quantities. It will leave the unresolved list. You can revisit it from Collection Options.</p></div>:<div className="resolver-classify">
      <div className="resolver-explanation"><p>{kind==='token'?'Keep this as a token even when the catalog has no matching entry.':'Keep this as an item outside the card catalog.'} It stays in your collection and exports, and leaves the unresolved list.</p></div>
      <div className="resolver-fields">
       <label htmlFor={`${prefix}-name`}>Display name <span>(optional)</span><input id={`${prefix}-name`} value={name} maxLength={200} placeholder={kind==='token'?'Example: Battle Droid token':'Describe this item'} onChange={event=>edit(()=>setName(event.target.value))}/></label>
@@ -118,7 +128,7 @@ function ResolverDialog({workspace,cards,sourceId,onSave,onDismiss}:Props){
     <div className="resolver-unresolved-count">Unresolved rows <strong>{preview.impact.unresolvedBefore} → {preview.impact.unresolvedAfter}</strong></div>
     <p className="resolver-preservation">Your original row is retained so this decision can be undone. Saved resolutions travel with Holocron backups and collection exports.</p>
    </div>}
-   <footer className="resolver-footer"><button type="button" onClick={onDismiss}>Cancel</button><button type="button" className="primary" disabled={!preview} onClick={save}>{clearing?'Save undo locally':'Save resolution locally'}</button></footer>
-  </section>
+   <footer className="resolver-footer"><button type="button" className="danger" onClick={()=>{setConfirmDelete(true);setError('')}}>Delete from collection</button><button type="button" onClick={onDismiss}>Cancel</button><button type="button" className="primary" disabled={!preview} onClick={save}>{clearing?'Save undo locally':'Save resolution locally'}</button></footer>
+  </section>}
  </Modal>;
 }
