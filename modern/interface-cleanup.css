@@ -24,6 +24,8 @@
 .sync-conflict{display:grid;gap:7px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft,#20312a)}
 .sync-conflict>p{margin:0;color:var(--muted);font-size:12px}
 .sync-conflict .actions{display:flex;flex-wrap:wrap;gap:7px}
+.filter-box>.quick-editor{margin:12px 0 0}
+.quick-editor>strong{display:block;font-size:12px}
 .tools-sections{margin:0 0 16px}
 .tools-sections button{display:inline-flex;gap:6px}
 .compact-metrics{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:22px}

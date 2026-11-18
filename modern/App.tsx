@@ -530,7 +530,6 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
      {tab==='lists'&&selectedList&&<><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('csv'))}><Download size={15}/>Export list CSV</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('json'))}><Download size={15}/>Export list JSON</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>setMassEntry({name:selectedList.name,...exportMassEntry(selectedList,byId)}))}><Copy size={15}/>TCGplayer Mass Entry</button><button onClick={()=>optionAction(()=>{const name=prompt('Rename list',selectedList.name);if(name?.trim())update({...current.current,lists:lists.map(l=>l.uid===listId?{...l,name:name.trim().slice(0,200)}:l)})})}>Rename list</button><button className="danger" onClick={()=>optionAction(()=>{if(confirm('Delete this list? Your cards and decks will stay unchanged.')){update({...current.current,lists:lists.filter(l=>l.uid!==listId)});setListId('')}})}>Delete list</button></>}
     </div>
     <div className="options-section"><strong>Display & history</strong><button onClick={()=>optionAction(()=>nav('updates'))}>Updates</button><button onClick={()=>optionAction(()=>{setSyncMessage('');setSyncOpen(true)})}><RotateCw size={15}/>Sync & card updates</button><button disabled={!loaded||!historyItems.length} onClick={()=>optionAction(()=>setHistoryOpen(true))}><RotateCw size={15}/>History ({historyItems.length})</button><HighlightOptions disabled={!loaded} value={cardHighlights} onChange={next=>preferences({highlight:next,rarityBorders:false})}/><button disabled={!loaded} aria-pressed={showDeckMembership} onClick={()=>preferences({showDeckMembership:!showDeckMembership})}>Show decks on cards {showDeckMembership?'On':'Off'}</button><ThemePicker theme={theme} disabled={!loaded} onSelect={next=>preferences({theme:next})}/></div>
-    {showCardBrowser&&quickFilters.length>0&&<div className="options-section"><strong>Quick filters</strong>{quickFilters.map(preset=><button key={preset.id} onClick={()=>optionAction(()=>openQuickFilter(preset))}><Bookmark size={15}/>{preset.name}</button>)}</div>}
     <div className="options-status"><HardDrive size={15}/><span>{status}</span>{status==='Unsaved changes'&&<button onClick={()=>void flush()}>Retry</button>}</div><div className="options-version">Holocron {siteVersion}</div>
    </div></details>
   </nav></div>
@@ -604,9 +603,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   </select>}
  </div>)}
  <button type="button" disabled={!loaded} onClick={()=>preferences({cardSort:defaultSort})}>Reset sort</button>
- </div></div></div></div></details>
- {showCardBrowser&&<details className="quick-editor">
-  <summary>Quick filters</summary>
+ </div></div></div>
+ <div className="quick-editor" role="group" aria-label="Quick filters">
+  <strong>Quick filters</strong>
+  {quickFilters.length>0&&<div className="quick-editor-buttons" aria-label="Apply a quick filter">{quickFilters.map(preset=><button type="button" key={preset.id} onClick={()=>openQuickFilter(preset)}><Bookmark size={15}/>{preset.name}</button>)}</div>}
   <div className="quick-editor-controls">
    <label>Preset<select value={presetId} onChange={event=>{
     const preset=quickFilters.find(item=>item.id===event.target.value);
@@ -622,7 +622,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    </>}
   </div>
   <p>Saved presets apply to the current card view, including deck building.</p>
- </details>}
+ </div>
+ </div></details>
 
  {tab==='collection'&&catalog&&unresolved.length>0&&<section className="unresolved" aria-label="Collection resolutions"><h3 role="status" aria-live="polite">{unresolved.length} unresolved collection rows</h3><p>Choose a row to find a catalog match, keep it as a token or non-catalog item, or ignore it. Original quantities and finishes stay preserved.</p><div className="tags">{unresolved.map(x=><button disabled={!loaded} key={x.id+String(x.foil)} onClick={()=>setResolvingId(x.id)}>{x.id} · {x.foil?'foil':'normal'} ×{x.count}<ArrowUpRight size={14}/></button>)}</div></section>}
  {tab==='deck'&&active&&deckView==='cards'&&[...active.deck,...active.sideboard].some(x=>!byId.has(x.id))&&<div className="unresolved">Unresolved deck IDs: {[...active.deck,...active.sideboard].filter(x=>!byId.has(x.id)).map(x=>`${x.id} ×${x.count}`).join(', ')}. Preserved in exports.</div>}
