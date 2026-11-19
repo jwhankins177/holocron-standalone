@@ -96,6 +96,18 @@ Restart `npm start` with the same `HOLOCRON_ALLOWED_HOSTS` setting, and restart 
 
 On iPhone, Steam Deck, and other clients, reconnect to Tailscale, reopen or refresh the app URL, and let the browser load the new version. Holocron's service worker updates the cached app shell when a new build is available. If you use **Save for offline use**, run it again while online to download newly added artwork. Device workspaces remain saved locally; use **Sync workspace** to send or receive changes.
 
+### Deploy publicly on Railway
+
+Railway can host the web app and sync API on one public HTTPS origin. It deploys the app when changes reach the connected branch and keeps account data on a persistent volume.
+
+1. Create a Railway project from this GitHub repository and select `main` for automatic deployments. Railway uses the checked-in `railway.json` to build the app, start the combined web and sync server, and check `/healthz`.
+2. In the service's **Settings → Networking**, generate a public domain. The service uses Railway's `RAILWAY_PUBLIC_DOMAIN` to allow that hostname and its HTTPS origin.
+3. Add a Railway volume mounted at `/data`. Set the service variable `HOLOCRON_SYNC_DATABASE=/data/holocron-sync.sqlite` so account and workspace data survives redeploys.
+4. If you add a custom domain, set `HOLOCRON_ALLOWED_HOSTS` to both the Railway hostname and custom hostname, and `HOLOCRON_ALLOWED_ORIGINS` to both HTTPS origins, comma-separated. Set `HOLOCRON_TRUST_PROXY=true` so account rate limits use the client address provided by Railway.
+5. Open the public HTTPS URL. On each device, use **Options → Sync & card updates** to create or sign in to an account, then sync the local workspace. The app and catalog API share the same origin; the first connection to an account is still an explicit user action.
+
+Registration is open to anyone who can reach the site, and the sync server does not provide email verification or password recovery. Use strong, unique passwords and keep independent workspace backups. Railway hosting automatically deploys code, but this release still uses a bundled rules snapshot and does not import market prices; those require separate data sources and implementation. App updates load when a user opens or refreshes the site; an in-app update prompt is not included.
+
 ### Connect a Steam Deck
 
 The Deck is a client, not the sync server. Switch to **Desktop Mode**, open Konsole, and install the Tailscale client using the [Tailscale-maintained Steam Deck install helper](https://github.com/tailscale-dev/deck-tailscale):

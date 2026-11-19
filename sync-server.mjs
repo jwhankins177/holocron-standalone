@@ -96,7 +96,7 @@ export function createSyncServer({
     if (!session || session.expires_at <= Date.now()) return null;
     return {id:session.id,email:session.email};
   };
-  const server = createServer(async (request,response) => {
+  const handleRequest = async (request,response) => {
     const origin = request.headers.origin;
     if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) return json(response,403,{error:'origin_not_allowed'});
     const cors = origin ? {
@@ -191,7 +191,8 @@ export function createSyncServer({
       else response.destroy();
       if (!error.status) console.error(error);
     }
-  });
+  };
+  const server=createServer(handleRequest);
 
   function createSession(userId) {
     database.prepare('DELETE FROM sessions WHERE expires_at<=?').run(Date.now());
@@ -200,7 +201,7 @@ export function createSyncServer({
       .run(digest(token),userId,Date.now()+tokenLifetime);
     return token;
   }
-  return {server,database};
+  return {server,database,handleRequest};
 }
 
 if (process.argv[1]===fileURLToPath(import.meta.url)) {
