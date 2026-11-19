@@ -28,6 +28,9 @@ import {cardKindOptions,compareCards,orderedAspects,defaultQuickFilters,defaultS
 import type {CardFilters,QuickFilter,SortRule} from './lib/card-display';
 import {nativeCall} from './lib/browser-actions';
 import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
+import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
+import {getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,registerAccount,validateCatalog} from './lib/sync-api';
+import type {RemoteWorkspace} from './lib/sync-api';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import {Box,Layers,Library,Search,Upload,Download,Plus,ArrowUpRight,Grid2X2,List,SlidersHorizontal,X,ChevronLeft,ChevronRight,Check,HardDrive,RotateCw,Trash2,Copy,BarChart3,Play,Bookmark,Minus,CheckCircle2,AlertCircle,ArrowDownUp,BookOpen,Shield,Package,Settings2,Wrench} from 'lucide-react';
 import {Card,Catalog,Deck,Owned,Workspace,emptyWorkspace,parseCollection,mergeCollection,exportCollection,exportCardList,exportMassEntry,parseDeck,deckExport,forceTableDeckUrl,aspectPenalty,probability,deckWarnings,validateBackup,makeId,createBackup,toggleFavorite,matchesAspects,deckMembership,CollectionResolution,effectiveCollection,unresolvedCollection,setCollectionResolution,parseCollectionImport,applyCollectionImport,adjustEffectiveOwned} from './lib/model';
@@ -55,6 +58,15 @@ export default function Home(){
  const [catalog,setCatalog]=useState<Catalog|null>(null),[workspace,setWorkspace]=useState<Workspace>(emptyWorkspace),[loaded,setLoaded]=useState(false),[status,setStatus]=useState('Loading local workspace'),[error,setError]=useState(''),[favoriteView,setFavoriteView]=useState('cards'),[tab,setTab]=useState('catalog'),[deckId,setDeckId]=useState(''),[deckView,setDeckView]=useState('cards'),[q,setQ]=useState(''),[aspect,setAspect]=useState<string[]>([]),[aspectMode,setAspectMode]=useState('any'),[listId,setListId]=useState(''),[listCard,setListCard]=useState<Card|null>(null),[listName,setListName]=useState(''),[theme,setTheme]=useState<HolocronTheme>(()=>{try{return normalizeTheme(localStorage.getItem('holocron-theme'))}catch{return 'dark'}}),[kinds,setKinds]=useState<string[]>([]),[set,setSet]=useState(''),[keyword,setKeyword]=useState(''),[trait,setTrait]=useState(''),[rarity,setRarity]=useState(''),[finish,setFinish]=useState(''),[variant,setVariant]=useState(''),[arena,setArena]=useState(''),[ability,setAbility]=useState(''),[artist,setArtist]=useState(''),[maxCost,setMaxCost]=useState(''),[minPower,setMinPower]=useState(''),[minHp,setMinHp]=useState(''),[onlyOwned,setOnlyOwned]=useState(false),[onlyUnowned,setOnlyUnowned]=useState(false),[premierOnly,setPremierOnly]=useState(false),[allPrintings,setAllPrintings]=useState(false),[view,setView]=useState('grid'),[size,setSize]=useState(240),[advanced,setAdvanced]=useState(false),[limit,setLimit]=useState(48),[detail,setDetail]=useState<Card|null>(null),[flipped,setFlipped]=useState(false),[tileBacks,setTileBacks]=useState<Record<string,boolean>>({}),[modal,setModal]=useState(''),[importText,setImportText]=useState(''),[importType,setImportType]=useState('collection'),[importMode,setImportMode]=useState('add'),[preview,setPreview]=useState<any>(null),[notice,setNotice]=useState(''),[editName,setEditName]=useState(''),[draws,setDraws]=useState(6),[copies,setCopies]=useState(3),[section,setSection]=useState<'deck'|'sideboard'>('deck');
  const [starterPickerOpen,setStarterPickerOpen]=useState(false);
  const [starterInitialId,setStarterInitialId]=useState('');
+ const [syncOpen,setSyncOpen]=useState(false);
+ const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||''}catch{return ''}});
+ const [syncEmail,setSyncEmail]=useState(()=>{try{return localStorage.getItem('holocron-sync-email')||''}catch{return ''}});
+ const [syncPassword,setSyncPassword]=useState('');
+ const [syncToken,setSyncToken]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
+ const [syncUserId,setSyncUserId]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?Number(localStorage.getItem('holocron-sync-user-id'))||0:0}catch{return 0}});
+ const [syncBusy,setSyncBusy]=useState(false);
+ const [syncMessage,setSyncMessage]=useState('');
+ const [remoteConflict,setRemoteConflict]=useState<{revision:number;updatedAt:string;data:Workspace}|null>(null);
  useEffect(()=>{if(!loaded||!catalog)return;const earned=collectionAchievements(workspace,catalog).filter(a=>a.earned&&!workspace.achievementUnlocks?.[a.id]);if(earned.length)update({...current.current,achievementUnlocks:{...current.current.achievementUnlocks,...Object.fromEntries(earned.map(a=>[a.id,new Date().toISOString()]))}},false,false)},[loaded,catalog,workspace.collection,workspace.resolutions,workspace.decks,workspace.achievementUnlocks]);
  function importStarter(starter:StarterDeck){try{const result=addStarterDeck(current.current,starter);if(!result.existing&&!update(result.workspace))return 'The deck could not be saved. Please resolve the workspace save error and try again.';setStarterPickerOpen(false);setFolderFilter('');setSection('deck');nav('deck');setDeckId(result.deck.uid);setDeckView('cards');setView('grid');resetFilters();setNotice(result.existing?'Opened your existing deck.':'Starter added to My decks. Collection quantities are unchanged.');return undefined}catch(error){return error instanceof Error?error.message:'Unable to import starter deck'}}
  const [collectionCard,setCollectionCard]=useState<Card|null>(null);
@@ -93,11 +105,28 @@ export default function Home(){
  const historyRef=useRef<ChangePoint[]>([]);
 const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(false),blocked=useRef(false),current=useRef(workspace);
  useEffect(()=>{
-  fetch('./catalog.json').then(response=>{
+  let cancelled=false;
+  void (async()=>{
+   const response=await fetch('./catalog.json');
    if(!response.ok)throw Error('Could not load the bundled catalog.');
-   return response.json() as Promise<Catalog>;
-  }).then(setCatalog).catch(error=>setError(error.message));
+   const bundled=validateCatalog(await response.json());
+   let latest=bundled;
+   try{const cached=await readCachedCatalog();latest=cached?validateCatalog(cached):bundled}catch(error){if(!cancelled)setError(error instanceof Error?error.message:'The cached catalog could not be read.')}
+   if(cancelled)return;
+   setCatalog(latest);
+   let endpoint='';
+   try{endpoint=localStorage.getItem('holocron-sync-url')||''}catch{}
+   if(!endpoint)return;
+   try{
+    const refreshed=await getRemoteCatalog(normalizeSyncUrl(endpoint));
+    const previous=new Map(latest.cards.map(card=>[card.id,card]));
+    const merged={...refreshed,cards:refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back}))};
+    await cacheCatalog(merged);
+    if(!cancelled)setCatalog(merged);
+   }catch(error){if(!cancelled)setError(error instanceof Error?error.message:'Unable to refresh the card catalog.')}
+  })().catch(error=>{if(!cancelled)setError(error instanceof Error?error.message:'Could not load the card catalog.')});
   loadLocal().then(record=>{
+   if(cancelled)return;
    current.current=record.data;
    revision.current=record.revision;
    setWorkspace(record.data);
@@ -105,7 +134,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    setHistoryItems(historyRef.current);
    setLoaded(true);
    setStatus('Saved on this device');
-  }).catch(error=>{setError(error.message);setStatus('Workspace unavailable')});
+  }).catch(error=>{if(!cancelled){setError(error.message);setStatus('Workspace unavailable')}});
+  return ()=>{cancelled=true};
  },[]);
  useEffect(()=>{
   function guard(event:BeforeUnloadEvent){
@@ -307,6 +337,97 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  async function copyDeck(){if(!active)return;try{const text=JSON.stringify(deckExport(active),null,2);await nativeCall('copy',{text});setNotice('SWUDB JSON copied.')}catch{setNotice('Clipboard unavailable. Use SWUDB JSON to download the file.')}}
  function exportDeck(){if(!active)return;try{download(active.name.replace(/[^a-z0-9-]/gi,'_')+'_SWUDB.json',JSON.stringify(deckExport(active),null,2))}catch(e:any){setNotice(e.message)}}
  async function backup(){if(!loaded){setError('Wait for your collection to load before exporting a backup.');return}const file=createBackup(current.current);if(await download(file.name,file.text))setNotice('Backup: '+file.name+'. On iPhone or iPad, choose Save to Files → iCloud Drive. Restore with Import collection → Full backup.')}
+ function saveSyncEndpoint(){
+  const base=normalizeSyncUrl(syncUrl),previous=localStorage.getItem('holocron-sync-url')||'';
+  localStorage.setItem('holocron-sync-url',base);
+  setSyncUrl(base);
+  if(previous&&previous!==base){
+   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
+   setSyncToken('');setSyncUserId(0);setSyncEmail('');setRemoteConflict(null);
+  }
+  return base;
+ }
+ async function syncAccount(action:'login'|'register'){
+  setSyncBusy(true);setSyncMessage('');
+  try{
+   const base=saveSyncEndpoint();
+   const result=action==='register'?await registerAccount(base,syncEmail,syncPassword):await loginAccount(base,syncEmail,syncPassword);
+   localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-email',result.user.email);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
+   setSyncToken(result.token);setSyncEmail(result.user.email);setSyncUserId(result.user.id);setSyncPassword('');
+   setSyncMessage('Signed in. Sync this workspace to start using it on your other devices.');
+  }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to connect to the sync server.')}
+  finally{setSyncBusy(false)}
+ }
+ async function signOutSync(){
+  setSyncBusy(true);setSyncMessage('');
+  try{const authBase=localStorage.getItem('holocron-sync-auth-url'),base=saveSyncEndpoint();if(syncToken&&authBase===base)await logoutAccount(base,syncToken)}catch(error){setSyncMessage(error instanceof Error?error.message:'The server sign-out could not be confirmed.')}
+  localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
+  setSyncToken('');setSyncUserId(0);setSyncEmail('');setSyncPassword('');setRemoteConflict(null);
+  setSyncBusy(false);
+ }
+ async function refreshCardCatalog(){
+  setSyncBusy(true);setSyncMessage('');
+  try{
+   const base=saveSyncEndpoint(),refreshed=await getRemoteCatalog(base),previous=new Map((catalog?.cards||[]).map(card=>[card.id,card]));
+   const merged={...refreshed,cards:refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back}))};
+   await cacheCatalog(merged);setCatalog(merged);
+   setSyncMessage('Card information refreshed · '+new Date(merged.updated).toLocaleDateString()+'.');
+  }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to refresh card information.')}
+  finally{setSyncBusy(false)}
+ }
+ function syncCursorKey(){return 'holocron-sync-revision:'+normalizeSyncUrl(syncUrl)+':'+syncUserId}
+ function rememberSyncRevision(value:number){localStorage.setItem(syncCursorKey(),String(value))}
+ function showRemoteConflict(remote:{revision:number;updatedAt:string;data:Workspace}){setRemoteConflict(remote);setSyncMessage('The cloud workspace differs from this device. Choose which copy to keep.')}
+ async function syncWorkspace(){
+  setSyncBusy(true);setSyncMessage('Checking cloud workspace…');
+  try{
+   const base=saveSyncEndpoint();
+   if(!loaded||pending.current||saving.current)throw Error('Wait for local changes to finish saving before syncing.');
+   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Sign in to this sync server before syncing your workspace.');
+   let remote:RemoteWorkspace;
+   try{remote=await getRemoteWorkspace(base,syncToken)}
+   catch(error){
+    if((error as Error&{status?:number}).status!==404)throw error;
+    const saved=await putRemoteWorkspace(base,syncToken,0,current.current);
+    rememberSyncRevision(saved.revision);setRemoteConflict(null);setSyncMessage('This device’s workspace is now backed up to your sync server.');return;
+   }
+   const savedRevision=Number(localStorage.getItem(syncCursorKey()));
+   const cursorExists=localStorage.getItem(syncCursorKey())!==null&&Number.isSafeInteger(savedRevision);
+   if(!cursorExists||savedRevision!==remote.revision){showRemoteConflict(remote);return}
+   const saved=await putRemoteWorkspace(base,syncToken,remote.revision,current.current);
+   rememberSyncRevision(saved.revision);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
+  }catch(error){
+   setSyncMessage(error instanceof Error?error.message:'Unable to sync this workspace.');
+  }finally{setSyncBusy(false)}
+ }
+ async function resolveWorkspaceConflict(choice:'cloud'|'device'){
+  if(!remoteConflict)return;
+  setSyncBusy(true);setSyncMessage('');
+  try{
+   const base=saveSyncEndpoint();
+   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Sign in to this sync server before resolving the workspace conflict.');
+   if(choice==='cloud'){
+    if(pending.current||saving.current)throw Error('Wait for local changes to finish saving before restoring.');
+    const restored=validateBackup(remoteConflict.data,byId),previous=current.current;
+    const record=await saveLocal(restored,revision.current);
+    const point={at:new Date().toISOString(),label:'Before cloud restore',before:previous};
+    historyRef.current=[point,...historyRef.current].slice(0,8);setHistoryItems(historyRef.current);
+    try{writeHistory(localStorage,workspaceKey,record.revision,historyRef.current)}catch{}
+    current.current=record.data;revision.current=record.revision;setWorkspace(record.data);setStatus('Saved on this device');setError('');
+    rememberSyncRevision(remoteConflict.revision);setSyncMessage('Cloud workspace restored to this device.');
+   }else{
+    const saved=await putRemoteWorkspace(base,syncToken,remoteConflict.revision,current.current);
+    rememberSyncRevision(saved.revision);setSyncMessage('This device’s workspace replaced the cloud copy.');
+   }
+   setRemoteConflict(null);
+  }catch(error){
+   const status=(error as Error&{status?:number}).status;
+   if(status===409){
+    try{showRemoteConflict(await getRemoteWorkspace(saveSyncEndpoint(),syncToken))}
+    catch(refreshError){setSyncMessage(refreshError instanceof Error?refreshError.message:'The cloud workspace changed again. Retry sync.')}
+   }else setSyncMessage(error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
+  }finally{setSyncBusy(false)}
+ }
  function play(){if(!active)return;try{const url=forceTableDeckUrl(active);window.open(url,'_blank','noopener,noreferrer');setNotice('Deck sent to ForceTable. Select an opponent there; verify its imported count, especially for new sets.')}catch(e:any){setNotice(e.message)}}
  const browsingDeck=tab==='deck'&&active&&deckView==='cards';
  const results=useMemo(()=>{let list=cards;if(browsingDeck){const ids=new Set([active!.leader,active!.base,...active![section].map(x=>x.id)]);list=list.filter(c=>ids.has(c.id))}else if(tab==='lists'){const ids=new Set(workspace.lists?.find(l=>l.uid===listId)?.cards||[]);list=list.filter(c=>ids.has(c.id))}else if(tab==='favorites'){list=list.filter(c=>favorites.cards.includes(c.id))}else if(tab==='collection'){list=list.filter(c=>ownedExact(c.id)>0)}else if(!allPrintings)list=list.filter(c=>c.variant==='Normal'&&!c.foilOnly);const query=q.trim().toLowerCase();list=list.filter(c=>(!premierOnly||premierIds.has(c.id))&&(!query||[c.name,c.subtitle,c.id,c.text,c.backText,...c.traits,...c.keywords].join(' ').toLowerCase().includes(query))&&matchesAspects(c.aspects,aspect,aspectMode)&&matchesCardKinds(c,kinds)&&(!set||c.set===set)&&(!keyword||c.keywords.includes(keyword))&&(!trait||c.traits.includes(trait))&&(!rarity||c.rarity===rarity)&&(!variant||c.variant===variant)&&(!arena||c.arena===arena)&&(!ability||(c.text+' '+c.backText+' '+c.epic).toLowerCase().includes(ability.toLowerCase()))&&(!artist||c.artist===artist)&&(!maxCost||(c.cost!==null&&c.cost<=Number(maxCost)))&&(!minPower||(c.power!==null&&c.power>=Number(minPower)))&&(!minHp||(c.hp!==null&&c.hp>=Number(minHp)))&&(!onlyOwned||(owned.get(c.core)||0)>0)&&(!onlyUnowned||tab==='collection'||!owned.get(c.core))&&(!finish||collection.some(x=>x.id===c.id&&x.foil===(finish==='foil')&&x.count>0)));return list.slice().sort((a,b)=>compareCards(a,b,sort,owned,foils))},[catalog,collection,workspace.favorites,tab,browsingDeck,active,section,q,aspect,aspectMode,listId,workspace.lists,kinds,set,keyword,trait,rarity,finish,variant,arena,ability,artist,maxCost,minPower,minHp,onlyOwned,onlyUnowned,premierOnly,allPrintings,sort,owned,foils,premierIds]);
@@ -408,8 +529,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
      {tab==='deck'&&active&&<><FavoriteButton active={favorites.decks.includes(active.uid)} label={active.name} disabled={!loaded} onClick={()=>optionAction(()=>favorite('decks',active.uid))}/><button onClick={()=>optionAction(()=>{void copyDeck()})}><Copy size={15}/>Copy deck JSON</button><button onClick={()=>optionAction(exportDeck)}><Download size={15}/>Export deck JSON</button><button onClick={()=>optionAction(play)}><Play size={15}/>Play on ForceTable</button></>}
      {tab==='lists'&&selectedList&&<><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('csv'))}><Download size={15}/>Export list CSV</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('json'))}><Download size={15}/>Export list JSON</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>setMassEntry({name:selectedList.name,...exportMassEntry(selectedList,byId)}))}><Copy size={15}/>TCGplayer Mass Entry</button><button onClick={()=>optionAction(()=>{const name=prompt('Rename list',selectedList.name);if(name?.trim())update({...current.current,lists:lists.map(l=>l.uid===listId?{...l,name:name.trim().slice(0,200)}:l)})})}>Rename list</button><button className="danger" onClick={()=>optionAction(()=>{if(confirm('Delete this list? Your cards and decks will stay unchanged.')){update({...current.current,lists:lists.filter(l=>l.uid!==listId)});setListId('')}})}>Delete list</button></>}
     </div>
-    <div className="options-section"><strong>Display & history</strong><button onClick={()=>optionAction(()=>nav('updates'))}>Updates</button><button disabled={!loaded||!historyItems.length} onClick={()=>optionAction(()=>setHistoryOpen(true))}><RotateCw size={15}/>History ({historyItems.length})</button><HighlightOptions disabled={!loaded} value={cardHighlights} onChange={next=>preferences({highlight:next,rarityBorders:false})}/><button disabled={!loaded} aria-pressed={showDeckMembership} onClick={()=>preferences({showDeckMembership:!showDeckMembership})}>Show decks on cards {showDeckMembership?'On':'Off'}</button><ThemePicker theme={theme} disabled={!loaded} onSelect={next=>preferences({theme:next})}/></div>
-    {showCardBrowser&&quickFilters.length>0&&<div className="options-section"><strong>Quick filters</strong>{quickFilters.map(preset=><button key={preset.id} onClick={()=>optionAction(()=>openQuickFilter(preset))}><Bookmark size={15}/>{preset.name}</button>)}</div>}
+    <div className="options-section"><strong>Display & history</strong><button onClick={()=>optionAction(()=>nav('updates'))}>Updates</button><button onClick={()=>optionAction(()=>{setSyncMessage('');setSyncOpen(true)})}><RotateCw size={15}/>Sync & card updates</button><button disabled={!loaded||!historyItems.length} onClick={()=>optionAction(()=>setHistoryOpen(true))}><RotateCw size={15}/>History ({historyItems.length})</button><HighlightOptions disabled={!loaded} value={cardHighlights} onChange={next=>preferences({highlight:next,rarityBorders:false})}/><button disabled={!loaded} aria-pressed={showDeckMembership} onClick={()=>preferences({showDeckMembership:!showDeckMembership})}>Show decks on cards {showDeckMembership?'On':'Off'}</button><ThemePicker theme={theme} disabled={!loaded} onSelect={next=>preferences({theme:next})}/></div>
     <div className="options-status"><HardDrive size={15}/><span>{status}</span>{status==='Unsaved changes'&&<button onClick={()=>void flush()}>Retry</button>}</div><div className="options-version">Holocron {siteVersion}</div>
    </div></details>
   </nav></div>
@@ -483,9 +603,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   </select>}
  </div>)}
  <button type="button" disabled={!loaded} onClick={()=>preferences({cardSort:defaultSort})}>Reset sort</button>
- </div></div></div></div></details>
- {showCardBrowser&&<details className="quick-editor">
-  <summary>Quick filters</summary>
+ </div></div></div>
+ <div className="quick-editor" role="group" aria-label="Quick filters">
+  <strong>Quick filters</strong>
+  {quickFilters.length>0&&<div className="quick-editor-buttons" aria-label="Apply a quick filter">{quickFilters.map(preset=><button type="button" key={preset.id} onClick={()=>openQuickFilter(preset)}><Bookmark size={15}/>{preset.name}</button>)}</div>}
   <div className="quick-editor-controls">
    <label>Preset<select value={presetId} onChange={event=>{
     const preset=quickFilters.find(item=>item.id===event.target.value);
@@ -501,7 +622,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    </>}
   </div>
   <p>Saved presets apply to the current card view, including deck building.</p>
- </details>}
+ </div>
+ </div></details>
 
  {tab==='collection'&&catalog&&unresolved.length>0&&<section className="unresolved" aria-label="Collection resolutions"><h3 role="status" aria-live="polite">{unresolved.length} unresolved collection rows</h3><p>Choose a row to find a catalog match, keep it as a token or non-catalog item, or ignore it. Original quantities and finishes stay preserved.</p><div className="tags">{unresolved.map(x=><button disabled={!loaded} key={x.id+String(x.foil)} onClick={()=>setResolvingId(x.id)}>{x.id} · {x.foil?'foil':'normal'} ×{x.count}<ArrowUpRight size={14}/></button>)}</div></section>}
  {tab==='deck'&&active&&deckView==='cards'&&[...active.deck,...active.sideboard].some(x=>!byId.has(x.id))&&<div className="unresolved">Unresolved deck IDs: {[...active.deck,...active.sideboard].filter(x=>!byId.has(x.id)).map(x=>`${x.id} ×${x.count}`).join(', ')}. Preserved in exports.</div>}
@@ -544,6 +666,32 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    }}><Copy size={15}/>Copy text</button>
    <button disabled={!massEntry.text.trim()} onClick={()=>void download((massEntry.name.replace(/[^a-z0-9-]+/gi,'_').slice(0,100)||'Card_List')+'_TCGplayer.txt',massEntry.text)}><Download size={15}/>Download TXT</button>
   </div>
+ </section></Modal>}
+ {syncOpen&&<Modal label="Sync and card updates" onDismiss={()=>setSyncOpen(false)}><section className="modal sync-dialog">
+  <button className="close" aria-label="Close sync settings" onClick={()=>setSyncOpen(false)}><X/></button>
+  <div className="eyebrow">YOUR DEVICES, IN STEP</div><h2>Sync & card updates</h2>
+  <p>Workspace sync is private to your account. Updates to the public card catalog are available to anyone using this server.</p>
+  <label>Sync server URL<input type="url" required placeholder="https://holocron.example.com" value={syncUrl} onChange={event=>setSyncUrl(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
+  <label>Email<input type="email" autoComplete="username" required value={syncEmail} onChange={event=>setSyncEmail(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
+  {!syncToken&&<label>Password<input type="password" autoComplete="current-password" minLength={12} maxLength={256} value={syncPassword} onChange={event=>setSyncPassword(event.target.value)} disabled={syncBusy}/></label>}
+  {syncToken?<><p>Signed in as <strong>{syncEmail}</strong>. Syncing is manual; changes are not sent until you choose Sync workspace.</p><div className="actions">
+   <button className="primary" disabled={syncBusy||!loaded||!!pending.current||saving.current} onClick={()=>void syncWorkspace()}><RotateCw size={15}/>{syncBusy?'Working…':'Sync workspace'}</button>
+   <button disabled={syncBusy} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
+   <button disabled={syncBusy} onClick={()=>void signOutSync()}>Sign out</button>
+  </div></>:<div className="actions">
+   <button className="primary" disabled={syncBusy||!syncEmail.trim()||syncPassword.length<12} onClick={()=>void syncAccount('login')}>Sign in</button>
+   <button disabled={syncBusy||!syncEmail.trim()||syncPassword.length<12} onClick={()=>void syncAccount('register')}>Create account</button>
+   <button disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
+  </div>}
+  {remoteConflict&&<div className="sync-conflict" role="alert">
+   <strong>These workspaces differ.</strong><p>Cloud revision {remoteConflict.revision}, saved {new Date(remoteConflict.updatedAt).toLocaleString()}. Choose one copy; the other will be replaced. Back up this device first if needed.</p>
+   <div className="actions">
+    <button disabled={syncBusy||pending.current!==null||saving.current} onClick={()=>{if(confirm('Replace this device’s workspace with the cloud copy? Export a backup first if you need to keep these local changes.'))void resolveWorkspaceConflict('cloud')}}>Use cloud copy on this device</button>
+    <button className="danger" disabled={syncBusy||pending.current!==null||saving.current} onClick={()=>{if(confirm('Replace the cloud workspace with this device’s copy? This affects every device on your account.'))void resolveWorkspaceConflict('device')}}>Replace cloud with this device</button>
+   </div>
+  </div>}
+  {syncMessage&&<p className={syncMessage.includes('differs')||syncMessage.includes('Unable')?'warning':'muted'} role="status">{syncMessage}</p>}
+  <p className="muted">Use HTTPS except for a sync server running on this device. Export a backup before resolving a workspace conflict.</p>
  </section></Modal>}
  {listCard&&<Modal label="Add card to lists" onDismiss={()=>setListCard(null)}><section className="modal"><button className="close" aria-label="Close lists" onClick={()=>setListCard(null)}><X/></button><h2>Add to lists</h2><p>{label(listCard)}</p><div className="list-choices">{lists.map(l=><label className="checkbox" key={l.uid}><input type="checkbox" checked={l.cards.includes(listCard.id)} onChange={()=>update({...current.current,lists:lists.map(x=>x.uid===l.uid?{...x,cards:x.cards.includes(listCard.id)?x.cards.filter(id=>id!==listCard.id):[...x.cards,listCard.id]}:x)})}/>{l.name}</label>)}</div><label>New list name<input value={listName} maxLength={200} onChange={e=>setListName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&createList()}/></label><button className="primary full" disabled={!listName.trim()} onClick={createList}>Create list and add card</button></section></Modal>}
  {starterPickerOpen&&<StarterDeckPicker initialId={starterInitialId} byId={byId} decks={workspace.decks} onImport={importStarter} onClose={()=>setStarterPickerOpen(false)}/>}
