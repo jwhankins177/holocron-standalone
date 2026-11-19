@@ -37,6 +37,9 @@ import {Card,Catalog,Deck,Owned,Workspace,emptyWorkspace,parseCollection,mergeCo
 const colors:Record<string,string>={Vigilance:'#497db8',Command:'#44876c',Aggression:'#c95d51',Cunning:'#c29a39',Heroism:'#d9d7c9',Villainy:'#454a4c'};
 const aspects=Object.keys(colors);
 const siteVersion=`v${APP_VERSION} · standalone`;
+function defaultSyncServer(){
+ return ['localhost','127.0.0.1','[::1]'].includes(location.hostname)||location.hostname.endsWith('.ts.net')?'':location.origin;
+}
 function aspectGroup(card:Card){
  return orderedAspects(card.aspects).join(' / ')||'Neutral';
 }
@@ -59,7 +62,7 @@ export default function Home(){
  const [starterPickerOpen,setStarterPickerOpen]=useState(false);
  const [starterInitialId,setStarterInitialId]=useState('');
  const [syncOpen,setSyncOpen]=useState(false);
- const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||''}catch{return ''}});
+ const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{return defaultSyncServer()}});
  const [syncEmail,setSyncEmail]=useState(()=>{try{return localStorage.getItem('holocron-sync-email')||''}catch{return ''}});
  const [syncPassword,setSyncPassword]=useState('');
  const [syncToken,setSyncToken]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
@@ -115,7 +118,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    if(cancelled)return;
    setCatalog(latest);
    let endpoint='';
-   try{endpoint=localStorage.getItem('holocron-sync-url')||''}catch{}
+   try{endpoint=localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{endpoint=defaultSyncServer()}
    if(!endpoint)return;
    try{
     const refreshed=await getRemoteCatalog(normalizeSyncUrl(endpoint));

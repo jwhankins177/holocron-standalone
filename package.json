@@ -10,6 +10,7 @@
     "build": "node scripts/build.mjs",
     "start": "node server.mjs",
     "start:sync": "node sync-server.mjs",
+    "start:cloud": "node cloud-server.mjs",
     "test": "node --import ./scripts/test-resolver.mjs --test tests/*.test.mjs"
   },
   "dependencies": {
@@ -18,7 +19,7 @@
     "react-dom": "19.2.6"
   },
   "devDependencies": {
-    "sharp": "0.35.4",
-    "vite": "8.0.13"
+    "sharp": "0.35.5",
+    "vite": "8.3.8"
   }
 }
