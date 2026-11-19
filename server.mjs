@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 const host = '127.0.0.1';
 const port = 41731;
 const authority = host + ':' + port;
+const allowedHosts = new Set((process.env.HOLOCRON_ALLOWED_HOSTS || authority).split(',').map(value=>value.trim().toLowerCase()).filter(Boolean));
 const root = fileURLToPath(new URL('./dist', import.meta.url));
 const types = new Map(Object.entries({
   '.html':'text/html; charset=utf-8',
@@ -26,7 +27,7 @@ function fail(response, status, message) {
 }
 
 const server = createServer(async (request, response) => {
-  if (request.headers.host !== authority) return fail(response, 400, 'Invalid host');
+  if (!allowedHosts.has(String(request.headers.host||'').toLowerCase())) return fail(response, 400, 'Invalid host');
   if (!['GET','HEAD'].includes(request.method)) return fail(response, 405, 'Method unavailable');
   let path;
   try {
