@@ -6,8 +6,12 @@ companion based on Holocron v2.9.5 (upstream commit
 
 ## Quick start
 
-See [QUICKSTART.md](QUICKSTART.md) for the supported setup: run the app locally
-or host the app and sync API together on Railway.
+See [QUICKSTART.md](QUICKSTART.md) for local setup or current Railway
+deployment steps. Railway hosting serves the app and sync API together from a
+single service; set its build, start, healthcheck, public domain, and persistent
+volume in Railway service settings. Services deploying this repository must
+migrate the deprecated `railway.json` configuration before relying on
+dashboard settings.
 
 The prebuilt Windows package includes Node.js:
 
