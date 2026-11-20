@@ -56,3 +56,6 @@ export function validateCatalog(value:unknown):Catalog{
 export async function getRemoteCatalog(base:string):Promise<Catalog>{
  return validateCatalog(await request<unknown>(base,'/api/catalog'));
 }
+export async function refreshRemoteCatalog(base:string):Promise<Catalog>{
+ return validateCatalog(await request<unknown>(base,'/api/catalog/refresh',undefined,{method:'POST'}));
+}

@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {createSyncServer} from '../sync-server.mjs';
 
-async function startServer(t) {
+async function startServer(t,options={}) {
   const database=new DatabaseSync(':memory:');
-  const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test']});
+  const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test'],...options});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
   const base=`http://127.0.0.1:${server.address().port}`;
   t.after(()=>new Promise(resolve=>server.close(()=>{database.close();resolve()})));
@@ -61,4 +61,26 @@ test('sync API restricts origins and exposes a cacheable public catalog',async t
   assert.match(catalog.headers.get('etag'),/^".+"$/);
   const cached=await fetch(base+'/api/catalog',{headers:{Origin:'https://app.example.test','If-None-Match':catalog.headers.get('etag')}});
   assert.equal(cached.status,304);
+});
+
+test('catalog refresh imports current SWU-DB data while preserving local printings',async t=>{
+  const upstreamCards=[
+    {Set:'SOR',Number:'059',Name:'2-1B Surgical Droid',Type:'Unit',Aspects:['Vigilance'],Traits:['DROID'],Keywords:[],Arenas:['Ground'],Cost:'1',Power:'1',HP:'3',FrontText:'Updated rules text.',DoubleSided:false,Rarity:'Common',Unique:false,Artist:'Hoan Nguyen',VariantType:'Normal',FrontArt:'https://cards.example.test/SOR/059.png'},
+    {Set:'ZZZ',Number:'1',Name:'New Card',Type:'Unit',Aspects:[],Traits:[],Keywords:[],Arenas:['Ground'],Cost:'2',Power:'2',HP:'2',FrontText:'New card text.',DoubleSided:false,Rarity:'Common',Unique:false,Artist:'Unknown',VariantType:'Normal',FrontArt:'https://cards.example.test/ZZZ/001.png'},
+  ];
+  const fetchImpl=async url=>new Response(JSON.stringify(String(url).endsWith('/sets')
+    ?[{setId:'ZZZ',fullName:'New Set'}]
+    :{data:upstreamCards}),{status:200,headers:{'Content-Type':'application/json'}});
+  const base=await startServer(t,{fetchImpl});
+  const response=await fetch(base+'/api/catalog/refresh',{method:'POST'});
+  assert.equal(response.status,200);
+  const catalog=await response.json();
+  assert.ok(Date.parse(catalog.updated)>Date.parse('2026-11-02T23:24:18.606665+00:00'));
+  assert.equal(catalog.cards.find(card=>card.id==='SOR_059').text,'Updated rules text.');
+  const hyperspace=catalog.cards.find(card=>card.id==='SOR_324');
+  assert.equal(hyperspace.text,'Updated rules text.');
+  assert.equal(hyperspace.variant,'Hyperspace');
+  assert.equal(hyperspace.image,'https://cdn.swu-db.com/images/cards/SOR/324.png');
+  assert.equal(catalog.cards.find(card=>card.id==='ZZZ_001').name,'New Card');
+  assert.ok(catalog.sets.some(set=>set.code==='ZZZ'&&set.name==='New Set'));
 });
