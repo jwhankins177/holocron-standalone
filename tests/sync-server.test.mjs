@@ -13,21 +13,29 @@ async function startServer(t,options={}) {
 }
 
 async function post(base,path,data,token){
-  return fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});
+  return fetch(base+path,{method:'POST',headers:{...(data===undefined?{}:{'Content-Type':'application/json'}),...(token?{Authorization:'Bearer '+token}:{})},...(data===undefined?{}:{body:JSON.stringify(data)})});
 }
 
 async function putWorkspace(base,token,expectedRevision,data){
   return fetch(base+'/api/workspace',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({expectedRevision,data})});
 }
 
-test('sync API registers accounts and protects workspaces with revision checks',async t=>{
+test('sync API creates collection codes, connects devices, and protects workspaces',async t=>{
   const base=await startServer(t);
-  const account=await post(base,'/api/auth/register',{email:'pilot@example.test',password:'a-strong-password'});
+  assert.equal((await post(base,'/api/auth/register',{email:'old@example.test',password:'legacy-password'})).status,400);
+  const account=await post(base,'/api/auth/register');
   assert.equal(account.status,201);
-  const {token,user}=await account.json();
-  assert.equal(user.email,'pilot@example.test');
+  const {token,user,code}=await account.json();
+  assert.equal(user.id,1);
+  assert.match(code,/^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/);
   assert.equal((await fetch(base+'/api/workspace')).status,401);
   assert.equal((await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}})).status,404);
+
+  const connected=await post(base,'/api/auth/login',{code:code.toLowerCase()});
+  assert.equal(connected.status,200);
+  const newDevice=await connected.json();
+  assert.equal(newDevice.user.id,user.id);
+  assert.equal(Object.hasOwn(newDevice,'code'),false);
 
   const data={collection:[{id:'SOR_005',foil:false,count:2}],decks:[]};
   const created=await putWorkspace(base,token,0,data);
@@ -40,15 +48,39 @@ test('sync API registers accounts and protects workspaces with revision checks',
   assert.deepEqual((await current.json()).data,data);
 });
 
-test('sync API rejects weak credentials and invalid workspace payloads',async t=>{
+test('sync API rotates collection codes and rejects invalid workspace payloads',async t=>{
   const base=await startServer(t);
-  assert.equal((await post(base,'/api/auth/register',{email:'pilot@example.test',password:'short'})).status,400);
-  const account=await post(base,'/api/auth/register',{email:'pilot@example.test',password:'a-strong-password'});
-  const {token}=await account.json();
-  assert.equal((await post(base,'/api/auth/register',{email:'pilot@example.test',password:'another-strong-password'})).status,409);
-  assert.equal((await post(base,'/api/auth/login',{email:'pilot@example.test',password:'wrong-password'})).status,401);
+  const account=await post(base,'/api/auth/register');
+  const {token,code}=await account.json();
+  assert.equal((await post(base,'/api/auth/login',{code:'not-a-valid-code'})).status,401);
+  const rotated=await post(base,'/api/auth/code',{},token);
+  assert.equal(rotated.status,200);
+  const {code:newCode}=await rotated.json();
+  assert.notEqual(newCode,code);
+  assert.equal((await post(base,'/api/auth/login',{code})).status,401);
+  assert.equal((await post(base,'/api/auth/login',{code:newCode})).status,200);
   const invalid=await putWorkspace(base,token,0,{collection:'bad',decks:[]});
   assert.equal(invalid.status,400);
+});
+
+test('legacy email accounts are not migrated but their workspaces are preserved',async t=>{
+  const database=new DatabaseSync(':memory:');
+  database.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE users(id INTEGER PRIMARY KEY,email TEXT NOT NULL UNIQUE,salt TEXT NOT NULL,password_hash TEXT NOT NULL);
+    CREATE TABLE sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
+    CREATE TABLE workspaces(user_id INTEGER PRIMARY KEY REFERENCES users(id),revision INTEGER NOT NULL,updated_at TEXT NOT NULL,data TEXT NOT NULL);
+    INSERT INTO users VALUES(1,'old@example.test','salt','hash');
+    INSERT INTO sessions VALUES('old-session',1,9999999999999);
+    INSERT INTO workspaces VALUES(1,1,'2026-11-20T00:00:00.000Z','{\"collection\":[],\"decks\":[]}');
+  `);
+  const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test']});
+  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
+  t.after(()=>new Promise(resolve=>server.close(()=>{database.close();resolve()})));
+  assert.deepEqual({...database.prepare('SELECT id,access_code_hash FROM users').get()},{id:1,access_code_hash:null});
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count,0);
+  assert.equal(database.prepare('SELECT data FROM workspaces WHERE user_id=1').get().data,'{\"collection\":[],\"decks\":[]}');
+  assert.deepEqual(database.prepare('PRAGMA foreign_key_check').all(),[]);
 });
 
 test('sync API restricts origins and exposes a cacheable public catalog',async t=>{

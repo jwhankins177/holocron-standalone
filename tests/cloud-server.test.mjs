@@ -33,10 +33,9 @@ test('cloud server serves the app and authenticated API on one origin',async t=>
   assert.equal((await request('/manifest.webmanifest')).status,200);
   assert.equal((await request('/api/catalog',{headers:{Origin:origin}})).status,200);
   assert.equal((await request('/api/catalog',{headers:{Origin:'https://attacker.example.test'}})).status,403);
-  const account=await request('/api/auth/register',{
-    method:'POST',
-    headers:{Origin:origin,'Content-Type':'application/json'},
-    body:JSON.stringify({email:'pilot@example.test',password:'a-strong-password'}),
-  });
+  const account=await request('/api/auth/register',{method:'POST',headers:{Origin:origin}});
   assert.equal(account.status,201);
+  const {code,user}=await account.json();
+  assert.match(code,/^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/);
+  assert.equal(user.id,1);
 });

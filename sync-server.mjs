@@ -1,4 +1,4 @@
-import {createHash, randomBytes, scryptSync, timingSafeEqual} from 'node:crypto';
+import {createHash, randomBytes} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
@@ -7,7 +7,6 @@ import {fileURLToPath} from 'node:url';
 const defaultCatalog = fileURLToPath(new URL('./public/catalog.json', import.meta.url));
 const tokenLifetime = 30 * 24 * 60 * 60 * 1000;
 const bodyLimit = 5 * 1024 * 1024;
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const json = (response, status, value, headers={}) => {
   response.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers});
@@ -27,6 +26,16 @@ function nullableNumber(value) {
   if (value===undefined||value===null||value==='') return null;
   const number=Number(value);
   return Number.isFinite(number)?number:null;
+}
+
+function makeAccessCode() {
+  return randomBytes(16).toString('hex').toUpperCase().match(/.{4}/g).join('-');
+}
+
+function normalizeAccessCode(value) {
+  if (typeof value!=='string'||value.length>64) return null;
+  const code=value.toUpperCase().replace(/[\s-]/g,'');
+  return /^[A-F0-9]{32}$/.test(code)?code:null;
 }
 
 function updateCatalog(catalog,upstreamCards,upstreamSets,updated) {
@@ -116,9 +125,7 @@ export function createSyncServer({
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      salt TEXT NOT NULL,
-      password_hash TEXT NOT NULL
+      access_code_hash TEXT UNIQUE
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY,
@@ -133,6 +140,24 @@ export function createSyncServer({
     );
   `);
   database.exec('PRAGMA foreign_keys = ON');
+  const userColumns=database.prepare('PRAGMA table_info(users)').all();
+  if (!userColumns.some(column=>column.name==='access_code_hash')) {
+    database.exec('PRAGMA foreign_keys = OFF');
+    try {
+      database.exec(`BEGIN IMMEDIATE;
+        CREATE TABLE users_code_migration (id INTEGER PRIMARY KEY,access_code_hash TEXT UNIQUE);
+        INSERT INTO users_code_migration(id) SELECT id FROM users;
+        DELETE FROM sessions;
+        DROP TABLE users;
+        ALTER TABLE users_code_migration RENAME TO users;
+        COMMIT;`);
+    } catch(error) {
+      database.exec('ROLLBACK');
+      throw error;
+    } finally {
+      database.exec('PRAGMA foreign_keys = ON');
+    }
+  }
   const rateLimits = new Map();
   const clientAddress = request => {
     const forwarded = process.env.HOLOCRON_TRUST_PROXY==='true'
@@ -153,9 +178,9 @@ export function createSyncServer({
   const authorize = request => {
     const token = request.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{40,})$/)?.[1];
     if (!token) return null;
-    const session = database.prepare('SELECT users.id, users.email, sessions.expires_at FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=?').get(digest(token));
+    const session = database.prepare('SELECT users.id, sessions.expires_at FROM sessions JOIN users ON users.id=sessions.user_id WHERE sessions.token_hash=?').get(digest(token));
     if (!session || session.expires_at <= Date.now()) return null;
-    return {id:session.id,email:session.email};
+    return {id:session.id};
   };
   const handleRequest = async (request,response) => {
     const origin = request.headers.origin;
@@ -200,37 +225,27 @@ export function createSyncServer({
       }
       if (pathname==='/api/auth/register' && request.method==='POST') {
         if (!limited('register:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
-        const body = await readBody(request);
-        const email = typeof body.email==='string' ? body.email.trim().toLowerCase() : '';
-        const password = body.password;
-        if (!emailPattern.test(email) || email.length>254 || typeof password!=='string' || password.length<12 || password.length>256) {
-          return json(response,400,{error:'invalid_credentials',message:'Use a valid email address and a password of 12–256 characters.'},cors);
-        }
-        const salt = randomBytes(16).toString('hex');
-        const hash = scryptSync(password,salt,64).toString('hex');
-        let result;
-        try { result=database.prepare('INSERT INTO users(email,salt,password_hash) VALUES(?,?,?)').run(email,salt,hash); }
-        catch(error) {
-          if (error.errcode===2067) return json(response,409,{error:'account_exists'},cors);
-          throw error;
-        }
-        const user={id:Number(result.lastInsertRowid),email};
-        return json(response,201,{token:createSession(user.id),user},cors);
+        if (request.headers['content-type']) return json(response,400,{error:'code_only_auth',message:'Create a collection code without email or password credentials.'},cors);
+        const code=makeAccessCode(),result=database.prepare('INSERT INTO users(access_code_hash) VALUES(?)').run(digest(code.replace(/-/g,'')));
+        const user={id:Number(result.lastInsertRowid)};
+        return json(response,201,{token:createSession(user.id),code,user},cors);
       }
       if (pathname==='/api/auth/login' && request.method==='POST') {
         if (!limited('login:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
         const body=await readBody(request);
-        const email=typeof body.email==='string'?body.email.trim().toLowerCase():'';
-        const password=typeof body.password==='string'?body.password:'';
-        if (email.length>254||password.length>256) return json(response,401,{error:'invalid_credentials'},cors);
-        const user=database.prepare('SELECT id,email,salt,password_hash FROM users WHERE email=?').get(email);
-        const salt=user?.salt||'holocron-invalid-login-salt';
-        const actual=scryptSync(password,salt,64);
-        const expected=Buffer.from(user?.password_hash||'0'.repeat(128),'hex');
-        if (!user || !timingSafeEqual(actual,expected)) return json(response,401,{error:'invalid_credentials'},cors);
-        return json(response,200,{token:createSession(user.id),user:{id:user.id,email:user.email}},cors);
+        const code=normalizeAccessCode(body.code);
+        if (!code) return json(response,401,{error:'invalid_credentials',message:'Enter a valid collection code.'},cors);
+        const user=database.prepare('SELECT id FROM users WHERE access_code_hash=?').get(digest(code));
+        if (!user) return json(response,401,{error:'invalid_credentials',message:'That collection code was not recognized.'},cors);
+        return json(response,200,{token:createSession(user.id),user:{id:user.id}},cors);
       }
       const user=authorize(request);
+      if (pathname==='/api/auth/code' && request.method==='POST') {
+        if (!user) return json(response,401,{error:'unauthorized'},cors);
+        const code=makeAccessCode();
+        database.prepare('UPDATE users SET access_code_hash=? WHERE id=?').run(digest(code.replace(/-/g,'')),user.id);
+        return json(response,200,{code},cors);
+      }
       if (pathname.startsWith('/api/workspace') && !user) return json(response,401,{error:'unauthorized'},cors);
       if (pathname==='/api/auth/logout' && request.method==='POST') {
         if (!user) return json(response,401,{error:'unauthorized'},cors);

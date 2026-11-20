@@ -1,6 +1,6 @@
 import type {Catalog,Workspace} from './model.ts';
 
-export type SyncUser={id:number;email:string};
+export type SyncUser={id:number};
 export type RemoteWorkspace={revision:number;updatedAt:string;data:Workspace};
 
 export function normalizeSyncUrl(value:string){
@@ -26,11 +26,14 @@ async function request<T>(base:string,path:string,token?:string,options:RequestI
  return response.json() as Promise<T>;
 }
 
-export function registerAccount(base:string,email:string,password:string){
- return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST',body:JSON.stringify({email,password})});
+export function registerAccount(base:string){
+ return request<{token:string;code:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST'});
 }
-export function loginAccount(base:string,email:string,password:string){
- return request<{token:string;user:SyncUser}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({email,password})});
+export function loginAccount(base:string,code:string){
+ return request<{token:string;user:SyncUser}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({code})});
+}
+export function rotateAccountCode(base:string,token:string){
+ return request<{code:string}>(base,'/api/auth/code',token,{method:'POST'});
 }
 export function logoutAccount(base:string,token:string){
  return request<{ok:boolean}>(base,'/api/auth/logout',token,{method:'POST'});

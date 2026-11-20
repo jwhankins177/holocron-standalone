@@ -29,7 +29,7 @@ import type {CardFilters,QuickFilter,SortRule} from './lib/card-display';
 import {nativeCall} from './lib/browser-actions';
 import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
-import {getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,validateCatalog} from './lib/sync-api';
+import {getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,rotateAccountCode,validateCatalog} from './lib/sync-api';
 import type {RemoteWorkspace} from './lib/sync-api';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import {Box,Layers,Library,Search,Upload,Download,Plus,ArrowUpRight,Grid2X2,List,SlidersHorizontal,X,ChevronLeft,ChevronRight,Check,HardDrive,RotateCw,Trash2,Copy,BarChart3,Play,Bookmark,Minus,CheckCircle2,AlertCircle,ArrowDownUp,BookOpen,Shield,Package,Settings2,Wrench} from 'lucide-react';
@@ -63,9 +63,8 @@ export default function Home(){
  const [starterInitialId,setStarterInitialId]=useState('');
  const [syncOpen,setSyncOpen]=useState(false);
  const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{return defaultSyncServer()}});
- const [syncEmail,setSyncEmail]=useState(()=>{try{return localStorage.getItem('holocron-sync-email')||''}catch{return ''}});
- const [syncPassword,setSyncPassword]=useState('');
- const [syncToken,setSyncToken]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
+ const [syncCode,setSyncCode]=useState('');
+ const [syncToken,setSyncToken]=useState(()=>{try{if(localStorage.getItem('holocron-sync-email')){localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');return ''}return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
  const [syncUserId,setSyncUserId]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?Number(localStorage.getItem('holocron-sync-user-id'))||0:0}catch{return 0}});
  const [syncBusy,setSyncBusy]=useState(false);
  const [syncMessage,setSyncMessage]=useState('');
@@ -354,26 +353,52 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   setSyncUrl(base);
   if(previous&&previous!==base){
    localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-   setSyncToken('');setSyncUserId(0);setSyncEmail('');setRemoteConflict(null);
+   setSyncToken('');setSyncUserId(0);setSyncCode('');setRemoteConflict(null);
   }
   return base;
+ }
+ function discardExpiredSyncSession(error:unknown){
+  if((error as Error&{status?:number}).status!==401)return false;
+  localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
+  setSyncToken('');setSyncUserId(0);setSyncCode('');setRemoteConflict(null);
+  return true;
  }
  async function syncAccount(action:'login'|'register'){
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
-   const result=action==='register'?await registerAccount(base,syncEmail,syncPassword):await loginAccount(base,syncEmail,syncPassword);
-   localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-email',result.user.email);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
-   setSyncToken(result.token);setSyncEmail(result.user.email);setSyncUserId(result.user.id);setSyncPassword('');
-   setSyncMessage('Signed in. Sync this workspace to start using it on your other devices.');
+   if(action==='register'){
+    const result=await registerAccount(base);
+    localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
+    localStorage.removeItem('holocron-sync-email');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode(result.code);
+    setSyncMessage('Collection created. Save your private code to connect other devices.');
+   }else{
+    const result=await loginAccount(base,syncCode);
+    localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
+    localStorage.removeItem('holocron-sync-email');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode(syncCode.trim());
+    setSyncMessage('Connected to your collection.');
+   }
   }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to connect to the sync server.')}
+  finally{setSyncBusy(false)}
+ }
+ async function generateSyncCode(){
+  setSyncBusy(true);setSyncMessage('');
+  try{
+   const base=saveSyncEndpoint();
+   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Connect to your collection before generating a code.');
+   const result=await rotateAccountCode(base,syncToken);
+   setSyncCode(result.code);
+   setSyncMessage('New collection code generated. The previous code no longer works; save this one privately.');
+  }catch(error){setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a collection code.':error instanceof Error?error.message:'Unable to generate a collection code.')}
   finally{setSyncBusy(false)}
  }
  async function signOutSync(){
   setSyncBusy(true);setSyncMessage('');
   try{const authBase=localStorage.getItem('holocron-sync-auth-url'),base=saveSyncEndpoint();if(syncToken&&authBase===base)await logoutAccount(base,syncToken)}catch(error){setSyncMessage(error instanceof Error?error.message:'The server sign-out could not be confirmed.')}
   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-  setSyncToken('');setSyncUserId(0);setSyncEmail('');setSyncPassword('');setRemoteConflict(null);
+  setSyncToken('');setSyncUserId(0);setSyncCode('');setRemoteConflict(null);
   setSyncBusy(false);
  }
  async function refreshCardCatalog(){
@@ -412,7 +437,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    const saved=await putRemoteWorkspace(base,syncToken,remote.revision,current.current);
    rememberSyncRevision(saved.revision);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
   }catch(error){
-   setSyncMessage(error instanceof Error?error.message:'Unable to sync this workspace.');
+   setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a collection code.':error instanceof Error?error.message:'Unable to sync this workspace.');
   }finally{setSyncBusy(false)}
  }
  async function resolveWorkspaceConflict(choice:'cloud'|'device'){
@@ -440,7 +465,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    if(status===409){
     try{showRemoteConflict(await getRemoteWorkspace(saveSyncEndpoint(),syncToken))}
     catch(refreshError){setSyncMessage(refreshError instanceof Error?refreshError.message:'The cloud workspace changed again. Retry sync.')}
-   }else setSyncMessage(error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
+   }else setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a collection code.':error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
   }finally{setSyncBusy(false)}
  }
  function play(){if(!active)return;try{const url=forceTableDeckUrl(active);window.open(url,'_blank','noopener,noreferrer');setNotice('Deck sent to ForceTable. Select an opponent there; verify its imported count, especially for new sets.')}catch(e:any){setNotice(e.message)}}
@@ -685,17 +710,20 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  {syncOpen&&<Modal label="Sync and card updates" onDismiss={()=>setSyncOpen(false)}><section className="modal sync-dialog">
   <button className="close" aria-label="Close sync settings" onClick={()=>setSyncOpen(false)}><X/></button>
   <div className="eyebrow">YOUR DEVICES, IN STEP</div><h2>Sync & card updates</h2>
-  <p>Workspace sync is private to your account. Updates to the public card catalog are available to anyone using this server.</p>
+  <p>Connect devices with a private collection code. Anyone with your code can access your workspace. Updates to the public card catalog are available to anyone using this server.</p>
   <label>Sync server URL<input type="url" required placeholder="https://holocron.example.com" value={syncUrl} onChange={event=>setSyncUrl(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
-  <label>Email<input type="email" autoComplete="username" required value={syncEmail} onChange={event=>setSyncEmail(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
-  {!syncToken&&<label>Password<input type="password" autoComplete="current-password" minLength={12} maxLength={256} value={syncPassword} onChange={event=>setSyncPassword(event.target.value)} disabled={syncBusy}/></label>}
-  {syncToken?<><p>Signed in as <strong>{syncEmail}</strong>. Syncing is manual; changes are not sent until you choose Sync workspace.</p><div className="actions">
+  {!syncToken&&<label>Collection code<input type="text" autoCapitalize="characters" autoComplete="off" maxLength={64} spellCheck={false} value={syncCode} onChange={event=>setSyncCode(event.target.value)} disabled={syncBusy}/></label>}
+  {syncToken?<><p>Connected to your collection. Syncing is manual; changes are not sent until you choose Sync workspace.</p>
+  {syncCode?<><p>Your private collection code:<br/><code>{syncCode}</code></p><p className="muted">Save this code somewhere secure. Anyone with it can access your collection.</p></>:<p className="muted">This device does not have your collection code saved. Generate a new one to connect another device.</p>}
+  <div className="actions">
+   {syncCode&&<button disabled={syncBusy} onClick={async()=>{try{await nativeCall('copy',{text:syncCode});setSyncMessage('Collection code copied. Keep it private.')}catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to copy the collection code.')}}}><Copy size={15}/>Copy code</button>}
+   <button disabled={syncBusy} onClick={()=>{if(confirm('Generate a new collection code? The previous code will stop working for new devices.'))void generateSyncCode()}}>{syncCode?'Generate a new code':'Generate collection code'}</button>
    <button className="primary" disabled={syncBusy||!loaded||!!pending.current||saving.current} onClick={()=>void syncWorkspace()}><RotateCw size={15}/>{syncBusy?'Working…':'Sync workspace'}</button>
    <button disabled={syncBusy} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
    <button disabled={syncBusy} onClick={()=>void signOutSync()}>Sign out</button>
   </div></>:<div className="actions">
-   <button className="primary" disabled={syncBusy||!syncEmail.trim()||syncPassword.length<12} onClick={()=>void syncAccount('login')}>Sign in</button>
-   <button disabled={syncBusy||!syncEmail.trim()||syncPassword.length<12} onClick={()=>void syncAccount('register')}>Create account</button>
+   <button className="primary" disabled={syncBusy||!syncCode.trim()} onClick={()=>void syncAccount('login')}>Connect to collection</button>
+   <button disabled={syncBusy} onClick={()=>void syncAccount('register')}>Create collection code</button>
    <button disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
   </div>}
   {remoteConflict&&<div className="sync-conflict" role="alert">
