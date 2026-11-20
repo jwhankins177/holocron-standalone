@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import {cp, mkdir, readFile, readdir, rename, stat, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {pathToFileURL, fileURLToPath} from 'node:url';
+import {downloadArtwork} from './artwork-download.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = join(root, 'dist');
@@ -77,11 +78,7 @@ async function sourceImage(hash, url) {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error;
   }
-  const response = await fetch(url, {signal:AbortSignal.timeout(30000)});
-  if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) {
-    throw Error('Could not fetch artwork: ' + url + ' (HTTP ' + response.status + ')');
-  }
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const bytes = await downloadArtwork(url);
   await writeFile(path + '.part', bytes);
   await rename(path + '.part', path);
   return bytes;
