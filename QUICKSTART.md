@@ -76,5 +76,5 @@ workspace backup before resolving a conflict.
 - Registration is available to anyone who can reach the public site. Use a
   strong, unique password; there is no email verification or password recovery.
 - Railway deploys code updates when changes reach its connected branch. The
-  bundled rules and catalog remain snapshots; update the catalog source and
-  redeploy to publish changed card information.
+  bundled rules remain snapshots; **Get latest card info** fetches current card
+  data from SWU-DB and caches it on this device.

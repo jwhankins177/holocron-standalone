@@ -29,7 +29,7 @@ import type {CardFilters,QuickFilter,SortRule} from './lib/card-display';
 import {nativeCall} from './lib/browser-actions';
 import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
-import {getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,registerAccount,validateCatalog} from './lib/sync-api';
+import {getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,validateCatalog} from './lib/sync-api';
 import type {RemoteWorkspace} from './lib/sync-api';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import {Box,Layers,Library,Search,Upload,Download,Plus,ArrowUpRight,Grid2X2,List,SlidersHorizontal,X,ChevronLeft,ChevronRight,Check,HardDrive,RotateCw,Trash2,Copy,BarChart3,Play,Bookmark,Minus,CheckCircle2,AlertCircle,ArrowDownUp,BookOpen,Shield,Package,Settings2,Wrench} from 'lucide-react';
@@ -106,7 +106,7 @@ export default function Home(){
  const [historyItems,setHistoryItems]=useState<ChangePoint[]>([]);
  const [historyOpen,setHistoryOpen]=useState(false);
  const historyRef=useRef<ChangePoint[]>([]);
-const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(false),blocked=useRef(false),current=useRef(workspace);
+const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(false),blocked=useRef(false),current=useRef(workspace),catalogDate=useRef(0);
  useEffect(()=>{
   let cancelled=false;
   void (async()=>{
@@ -116,16 +116,24 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    let latest=bundled;
    try{const cached=await readCachedCatalog();latest=cached?validateCatalog(cached):bundled}catch(error){if(!cancelled)setError(error instanceof Error?error.message:'The cached catalog could not be read.')}
    if(cancelled)return;
+   catalogDate.current=Date.parse(latest.updated)||0;
    setCatalog(latest);
    let endpoint='';
    try{endpoint=localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{endpoint=defaultSyncServer()}
    if(!endpoint)return;
    try{
     const refreshed=await getRemoteCatalog(normalizeSyncUrl(endpoint));
-    const previous=new Map(latest.cards.map(card=>[card.id,card]));
-    const merged={...refreshed,cards:refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back}))};
-    await cacheCatalog(merged);
-    if(!cancelled)setCatalog(merged);
+    if(Date.parse(refreshed.updated)>catalogDate.current){
+     const previous=new Map(latest.cards.map(card=>[card.id,card]));
+     const refreshedIds=new Set(refreshed.cards.map(card=>card.id));
+     const merged={...refreshed,cards:[
+      ...refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back})),
+      ...latest.cards.filter(card=>!refreshedIds.has(card.id)),
+     ]};
+     await cacheCatalog(merged);
+     catalogDate.current=Date.parse(merged.updated)||catalogDate.current;
+     if(!cancelled)setCatalog(merged);
+    }
    }catch(error){if(!cancelled)setError(error instanceof Error?error.message:'Unable to refresh the card catalog.')}
   })().catch(error=>{if(!cancelled)setError(error instanceof Error?error.message:'Could not load the card catalog.')});
   loadLocal().then(record=>{
@@ -371,9 +379,13 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  async function refreshCardCatalog(){
   setSyncBusy(true);setSyncMessage('');
   try{
-   const base=saveSyncEndpoint(),refreshed=await getRemoteCatalog(base),previous=new Map((catalog?.cards||[]).map(card=>[card.id,card]));
-   const merged={...refreshed,cards:refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back}))};
-   await cacheCatalog(merged);setCatalog(merged);
+   const base=saveSyncEndpoint(),refreshed=await refreshRemoteCatalog(base),previous=new Map((catalog?.cards||[]).map(card=>[card.id,card]));
+   const refreshedIds=new Set(refreshed.cards.map(card=>card.id));
+   const merged={...refreshed,cards:[
+    ...refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back})),
+    ...(catalog?.cards||[]).filter(card=>!refreshedIds.has(card.id)),
+   ]};
+   await cacheCatalog(merged);catalogDate.current=Date.parse(merged.updated)||catalogDate.current;setCatalog(merged);
    setSyncMessage('Card information refreshed · '+new Date(merged.updated).toLocaleDateString()+'.');
   }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to refresh card information.')}
   finally{setSyncBusy(false)}

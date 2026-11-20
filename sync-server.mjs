@@ -14,6 +14,66 @@ const json = (response, status, value, headers={}) => {
   response.end(JSON.stringify(value));
 };
 
+function catalogCardId(set,number) {
+  const value=String(number);
+  return `${set}_${/^\d+$/.test(value)?value.padStart(3,'0'):value}`;
+}
+
+function titleCase(value) {
+  return String(value||'').toLowerCase().replace(/\b[a-z]/g,letter=>letter.toUpperCase());
+}
+
+function nullableNumber(value) {
+  if (value===undefined||value===null||value==='') return null;
+  const number=Number(value);
+  return Number.isFinite(number)?number:null;
+}
+
+function updateCatalog(catalog,upstreamCards,upstreamSets,updated) {
+  if (!Array.isArray(upstreamCards)||upstreamCards.length===0||upstreamCards.length>30000||
+      !Array.isArray(upstreamSets)||upstreamSets.length>500) {
+    throw Object.assign(Error('SWU-DB returned an invalid card catalog.'),{status:502});
+  }
+  const cardsById=new Map();
+  for (const source of upstreamCards) {
+    if (typeof source.Set!=='string'||typeof source.Number!=='string'&&typeof source.Number!=='number'||
+        typeof source.Name!=='string'||typeof source.Type!=='string') {
+      throw Object.assign(Error('SWU-DB returned an invalid card catalog.'),{status:502});
+    }
+    const id=catalogCardId(source.Set,source.Number);
+    if (cardsById.has(id)) throw Object.assign(Error('SWU-DB returned duplicate card IDs.'),{status:502});
+    const text=source.FrontText||'';
+    const card={
+      id,name:source.Name,subtitle:source.Subtitle||'',type:source.Type,set:source.Set,number:String(source.Number),
+      aspects:Array.isArray(source.Aspects)?source.Aspects:[],
+      traits:Array.isArray(source.Traits)?source.Traits.map(titleCase):[],
+      keywords:Array.isArray(source.Keywords)?source.Keywords.map(titleCase):[],
+      cost:nullableNumber(source.Cost),power:nullableNumber(source.Power),hp:nullableNumber(source.HP),
+      arena:Array.isArray(source.Arenas)?source.Arenas.join(', '):'',rarity:source.Rarity||'',artist:source.Artist||'',
+      variant:'Normal',image:source.FrontArt||'',back:source.BackArt||'',text,backText:source.BackText||'',
+      epic:source.EpicAction||'',unique:source.Unique===true,core:`${source.Name}|${source.Subtitle||''}|${source.Type}`,
+      canonical:id,foilOnly:false,
+    };
+    cardsById.set(id,card);
+  }
+  const cards=catalog.cards.map(card=>{
+    const source=cardsById.get(card.canonical);
+    if (!source) return card;
+    return {...source,id:card.id,number:card.number,variant:card.variant,image:card.image||source.image,
+      back:card.back||source.back,foilOnly:card.foilOnly===true};
+  });
+  const knownIds=new Set(cards.map(card=>card.id));
+  for (const [id,card] of cardsById) if (!knownIds.has(id)) cards.push(card);
+  const sets=new Map(catalog.sets.map(set=>[set.code,set]));
+  for (const source of upstreamSets) {
+    if (typeof source.setId!=='string'||typeof source.fullName!=='string') {
+      throw Object.assign(Error('SWU-DB returned an invalid set catalog.'),{status:502});
+    }
+    sets.set(source.setId,{code:source.setId,name:source.fullName});
+  }
+  return {...catalog,cards,sets:[...sets.values()],updated};
+}
+
 function readBody(request) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -50,6 +110,7 @@ export function createSyncServer({
   catalogPath = process.env.HOLOCRON_SYNC_CATALOG || defaultCatalog,
   allowedOrigins = (process.env.HOLOCRON_ALLOWED_ORIGINS || 'http://127.0.0.1:41731,http://localhost:41731').split(',').map(value=>value.trim()).filter(Boolean),
   database = new DatabaseSync(databasePath),
+  fetchImpl = globalThis.fetch,
 }={}) {
   database.exec(`
     PRAGMA journal_mode = WAL;
@@ -124,6 +185,18 @@ export function createSyncServer({
           return response.end();
         }
         return json(response,200,catalog,{...cors,ETag:etag,'Cache-Control':'no-cache'});
+      }
+      if (pathname==='/api/catalog/refresh' && request.method==='POST') {
+        if (!limited('catalog-refresh:'+clientAddress(request))) return json(response,429,{error:'rate_limited',message:'Please wait before refreshing the card catalog again.'},cors);
+        const catalog=JSON.parse(await readFile(catalogPath,'utf8'));
+        const [cardsResponse,setsResponse]=await Promise.all([
+          fetchImpl('https://api.swu-db.com/cards/search?q=*',{signal:AbortSignal.timeout(30000)}),
+          fetchImpl('https://api.swu-db.com/sets',{signal:AbortSignal.timeout(30000)}),
+        ]);
+        if (!cardsResponse.ok||!setsResponse.ok) throw Object.assign(Error('SWU-DB could not be reached. Try again later.'),{status:502});
+        const cardsPayload=await cardsResponse.json(),setsPayload=await setsResponse.json();
+        const refreshed=updateCatalog(catalog,cardsPayload.data,setsPayload,new Date().toISOString());
+        return json(response,200,refreshed,cors);
       }
       if (pathname==='/api/auth/register' && request.method==='POST') {
         if (!limited('register:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
