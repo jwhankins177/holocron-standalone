@@ -21,20 +21,39 @@ backup.
 
 ## Deploy on Railway
 
-1. Create a Railway project from this GitHub repository and deploy the
-   `main` branch. The checked-in `railway.json` builds the app, starts the
-   combined app and sync server, and configures the `/healthz` health check.
-2. In the service's **Settings → Networking**, generate a public domain.
-   Railway configures the allowed host and HTTPS origin from that domain.
-3. Add a Railway volume mounted at `/data`, then set the service variable
-   `HOLOCRON_SYNC_DATABASE=/data/holocron-sync.sqlite`. This keeps account
-   workspaces across deploys and restarts.
-4. Deploy the service and open its public HTTPS URL.
+1. In Railway, create a project from this GitHub repository and connect the
+   service to the `main` branch. Railway builds and deploys new commits pushed
+   to the connected branch. See Railway's guide to
+   [services from GitHub](https://docs.railway.com/services#deploying-from-a-github-repo).
+2. In the service settings, set **Build Command** to `npm run build`,
+   **Start Command** to `npm run start:cloud`, and **Healthcheck Path** to
+   `/healthz`. Railway provides the `PORT` environment variable; the app
+   listens on it. See [build and start commands](https://docs.railway.com/builds/build-and-start-commands)
+   and [healthchecks](https://docs.railway.com/deployments/healthchecks).
+3. Generate a public domain under **Settings → Networking → Public Networking**.
+   Railway provisions HTTPS automatically. See [public networking](https://docs.railway.com/networking/public-networking).
+4. Add a volume to the service, mount it at `/data`, and set the service
+   variable `HOLOCRON_SYNC_DATABASE=/data/holocron-sync.sqlite`. The volume
+   persists account workspaces across deployments. See [volumes](https://docs.railway.com/volumes).
+5. Review and deploy the staged changes. Open the public HTTPS domain when
+   deployment is healthy.
 
 If you use a custom domain, set `HOLOCRON_ALLOWED_HOSTS` to include both the
 Railway domain and custom hostname, and `HOLOCRON_ALLOWED_ORIGINS` to include
 both HTTPS origins, comma-separated. Set `HOLOCRON_TRUST_PROXY=true` so account
-rate limits use the client address provided by Railway.
+rate limits use the client address provided by Railway. Review and deploy
+these variable changes as well.
+
+**Important:** This repository contains a legacy `railway.json`. Railway's
+current documentation says Config as Code is deprecated, existing services
+stop reading these files on **December 1, 2026**, and the file overrides
+dashboard settings until migration cutover. Railway may also discover a config
+file at the repository root. Do not delete the file or assume dashboard changes
+take effect while the service still uses it. Follow Railway's [migration
+instructions](https://docs.railway.com/infrastructure-as-code#migrating-from-config-as-code)
+with the Railway CLI, migrate and cut over, then remove `railway.json` as
+directed. New services should use Railway's current Infrastructure as Code or
+service settings rather than Config as Code.
 
 ## Connect a device
 
@@ -52,6 +71,8 @@ workspace backup before resolving a conflict.
 
 - Save independent backups from **Options → Backup workspace**. The Railway
   volume stores the sync database, but is not a substitute for backups.
+- Configure manual or scheduled Railway volume backups in the service's
+  **Backups** tab. See [Railway volume backups](https://docs.railway.com/volumes/backups).
 - Registration is available to anyone who can reach the public site. Use a
   strong, unique password; there is no email verification or password recovery.
 - Railway deploys code updates when changes reach its connected branch. The
