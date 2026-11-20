@@ -6,8 +6,8 @@ companion based on Holocron v2.9.5 (upstream commit
 
 ## Quick start
 
-See [QUICKSTART.md](QUICKSTART.md) for the supported setup: run the app and
-sync API locally, or expose both privately through Tailscale Serve.
+See [QUICKSTART.md](QUICKSTART.md) for the supported setup: run the app locally
+or host the app and sync API together on Railway.
 
 The prebuilt Windows package includes Node.js:
 
