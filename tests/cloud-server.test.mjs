@@ -35,7 +35,12 @@ test('cloud server serves the app and authenticated API on one origin',async t=>
   assert.equal((await request('/api/catalog',{headers:{Origin:'https://attacker.example.test'}})).status,403);
   const account=await request('/api/auth/register',{method:'POST',headers:{Origin:origin}});
   assert.equal(account.status,201);
-  const {code,user}=await account.json();
-  assert.match(code,/^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/);
+  const {token,user,...accountData}=await account.json();
   assert.equal(user.id,1);
+  assert.equal(Object.hasOwn(accountData,'code'),false);
+  const pairing=await request('/api/auth/pairing-code',{method:'POST',headers:{Origin:origin,Authorization:'Bearer '+token}});
+  assert.equal(pairing.status,200);
+  const {code,expiresAt}=await pairing.json();
+  assert.match(code,/^\d{8}$/);
+  assert.ok(Date.parse(expiresAt)>Date.now());
 });

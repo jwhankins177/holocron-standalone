@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {createSyncServer} from '../sync-server.mjs';
 
 async function startServer(t,options={}) {
-  const database=new DatabaseSync(':memory:');
+  const database=options.database||new DatabaseSync(':memory:');
   const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test'],...options});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
   const base=`http://127.0.0.1:${server.address().port}`;
@@ -20,22 +21,33 @@ async function putWorkspace(base,token,expectedRevision,data){
   return fetch(base+'/api/workspace',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({expectedRevision,data})});
 }
 
-test('sync API creates collection codes, connects devices, and protects workspaces',async t=>{
-  const base=await startServer(t);
+test('sync API creates a collection, pairs a device once, and protects workspaces',async t=>{
+  const database=new DatabaseSync(':memory:');
+  const base=await startServer(t,{database});
   assert.equal((await post(base,'/api/auth/register',{email:'old@example.test',password:'legacy-password'})).status,400);
   const account=await post(base,'/api/auth/register');
   assert.equal(account.status,201);
-  const {token,user,code}=await account.json();
+  const {token,user,...accountData}=await account.json();
   assert.equal(user.id,1);
-  assert.match(code,/^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/);
+  assert.equal(Object.hasOwn(accountData,'code'),false);
   assert.equal((await fetch(base+'/api/workspace')).status,401);
   assert.equal((await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}})).status,404);
 
-  const connected=await post(base,'/api/auth/login',{code:code.toLowerCase()});
-  assert.equal(connected.status,200);
-  const newDevice=await connected.json();
+  const pairingResponse=await post(base,'/api/auth/pairing-code',{},token);
+  assert.equal(pairingResponse.status,200);
+  const {code,expiresAt}=await pairingResponse.json();
+  assert.match(code,/^\d{8}$/);
+  assert.ok(Date.parse(expiresAt)-Date.now()<=10*60*1000);
+  assert.ok(Date.parse(expiresAt)-Date.now()>9*60*1000);
+  const redemptions=await Promise.all([post(base,'/api/auth/login',{code}),post(base,'/api/auth/login',{code})]);
+  assert.deepEqual(redemptions.map(response=>response.status).sort(),[200,401]);
+  const newDevice=await redemptions.find(response=>response.status===200).json();
   assert.equal(newDevice.user.id,user.id);
   assert.equal(Object.hasOwn(newDevice,'code'),false);
+  const expired=await (await post(base,'/api/auth/pairing-code',{},token)).json();
+  const expiredHash=createHash('sha256').update(expired.code).digest('hex');
+  database.prepare('UPDATE pairing_codes SET expires_at=? WHERE code_hash=?').run(Date.now()-1,expiredHash);
+  assert.equal((await post(base,'/api/auth/login',{code:expired.code})).status,401);
 
   const data={collection:[{id:'SOR_005',foil:false,count:2}],decks:[]};
   const created=await putWorkspace(base,token,0,data);
@@ -48,19 +60,33 @@ test('sync API creates collection codes, connects devices, and protects workspac
   assert.deepEqual((await current.json()).data,data);
 });
 
-test('sync API rotates collection codes and rejects invalid workspace payloads',async t=>{
+test('sync API replaces unused pairing codes and rejects invalid workspace payloads',async t=>{
   const base=await startServer(t);
   const account=await post(base,'/api/auth/register');
-  const {token,code}=await account.json();
+  const {token}=await account.json();
   assert.equal((await post(base,'/api/auth/login',{code:'not-a-valid-code'})).status,401);
-  const rotated=await post(base,'/api/auth/code',{},token);
-  assert.equal(rotated.status,200);
-  const {code:newCode}=await rotated.json();
-  assert.notEqual(newCode,code);
-  assert.equal((await post(base,'/api/auth/login',{code})).status,401);
-  assert.equal((await post(base,'/api/auth/login',{code:newCode})).status,200);
+  const first=await (await post(base,'/api/auth/pairing-code',{},token)).json();
+  const second=await (await post(base,'/api/auth/pairing-code',{},token)).json();
+  assert.notEqual(second.code,first.code);
+  assert.equal((await post(base,'/api/auth/login',{code:first.code})).status,401);
+  assert.equal((await post(base,'/api/auth/login',{code:second.code})).status,200);
+  assert.equal((await post(base,'/api/auth/login',{code:second.code})).status,401);
   const invalid=await putWorkspace(base,token,0,{collection:'bad',decks:[]});
   assert.equal(invalid.status,400);
+});
+
+test('sync API accepts a previous private code once for reconnection',async t=>{
+  const database=new DatabaseSync(':memory:');
+  database.exec('CREATE TABLE users(id INTEGER PRIMARY KEY,access_code_hash TEXT UNIQUE)');
+  const legacyCode='0123456789ABCDEF0123456789ABCDEF';
+  const formattedCode=legacyCode.match(/.{4}/g).join('-');
+  const codeHash=createHash('sha256').update(legacyCode).digest('hex');
+  database.prepare('INSERT INTO users(id,access_code_hash) VALUES(1,?)').run(codeHash);
+  const base=await startServer(t,{database});
+  const redemptions=await Promise.all([post(base,'/api/auth/login',{code:formattedCode.toLowerCase()}),post(base,'/api/auth/login',{code:formattedCode})]);
+  assert.deepEqual(redemptions.map(response=>response.status).sort(),[200,401]);
+  assert.equal((await redemptions.find(response=>response.status===200).json()).legacyCodeUsed,true);
+  assert.equal(database.prepare('SELECT access_code_hash FROM users WHERE id=1').get().access_code_hash,null);
 });
 
 test('legacy email accounts are not migrated but their workspaces are preserved',async t=>{
