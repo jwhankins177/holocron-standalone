@@ -60,8 +60,10 @@ service settings rather than Config as Code.
 1. Open the Railway HTTPS URL on the device.
 2. Choose **Options → Sync & card updates**.
 3. Enter the same HTTPS URL as the sync server URL.
-4. Create an account on the first device, or sign in to an existing account.
-5. Choose **Sync workspace** to send this device's workspace.
+4. On the first device, choose **Create collection code** and save the code
+   somewhere secure.
+5. On each other device, enter that code and choose **Connect to collection**.
+6. Choose **Sync workspace** to send this device's workspace.
 
 Sync is manual; changes are not sent until you choose **Sync workspace**.
 When the device and cloud copies differ, choose which copy to keep. Export a
@@ -73,8 +75,12 @@ workspace backup before resolving a conflict.
   volume stores the sync database, but is not a substitute for backups.
 - Configure manual or scheduled Railway volume backups in the service's
   **Backups** tab. See [Railway volume backups](https://docs.railway.com/volumes/backups).
-- Registration is available to anyone who can reach the public site. Use a
-  strong, unique password; there is no email verification or password recovery.
+- A collection code is a reusable secret: anyone who has it can access the
+  collection. You can generate a replacement while signed in; losing the code
+  after signing out of every device means the collection cannot be accessed.
+- Existing email/password accounts are not migrated to collection codes.
+  Their remote workspaces remain stored but cannot be accessed with the new
+  sign-in method.
 - Railway deploys code updates when changes reach its connected branch. The
   bundled rules remain snapshots; **Get latest card info** fetches current card
   data from SWU-DB and caches it on this device.
