@@ -4,7 +4,7 @@ import HighlightOptions,{HighlightProvider,useCardHighlight,HighlightBadge} from
 import {highlightSettings} from './lib/highlights';
 import {generatedPractice} from './lib/practice-plan';
 import {BuildableDecks,ReplacementsPanel,DeckCompare,LegalityAlerts,Achievements} from './Insights';
-import {MatchHistory} from './PlayRecords';
+import {MatchHistory,RecordMatch} from './PlayRecords';
 import ReleaseUpdates from './ReleaseUpdates';
 import {saveMatch,type PracticeNotes,type MatchRecord} from './lib/play-records';
 import OfflineInstall from './OfflineInstall';
@@ -30,9 +30,11 @@ import type {CardFilters,QuickFilter,SortRule} from './lib/card-display';
 import {nativeCall} from './lib/browser-actions';
 import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
-import {getRemoteCatalog,getRemoteWorkspace,getSyncAccount,loginAccount,logoutAccount,logoutAllAccounts,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,setSyncAccountCredentials,validateCatalog} from './lib/sync-api';
-import type {RemoteWorkspace} from './lib/sync-api';
+import {explainSyncError,getRemoteCatalog,getRemoteWorkspace,getSyncAccount,loginAccount,logoutAccount,logoutAllAccounts,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,setSyncAccountCredentials,validateCatalog} from './lib/sync-api';
 import {readSyncSession} from './lib/sync-session';
+import {affectedDecks,elapsedBackup} from './lib/workspace-extras';
+import {validatePlayRecords} from './lib/play-records';
+import {syncSnapshot} from './lib/workspace-sync';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import {Box,Layers,Library,Search,Upload,Download,Plus,ArrowUpRight,Grid2X2,List,SlidersHorizontal,X,ChevronLeft,ChevronRight,Check,HardDrive,RotateCw,Trash2,Copy,BarChart3,Play,Bookmark,Minus,CheckCircle2,AlertCircle,ArrowDownUp,BookOpen,Shield,Package,Settings2,Wrench} from 'lucide-react';
 import {Card,Catalog,Deck,Owned,Workspace,emptyWorkspace,parseCollection,mergeCollection,exportCollection,exportCardList,exportMassEntry,parseDeck,deckExport,forceTableDeckUrl,aspectPenalty,probability,deckWarnings,validateBackup,makeId,createBackup,toggleFavorite,matchesAspects,deckMembership,CollectionResolution,effectiveCollection,unresolvedCollection,setCollectionResolution,parseCollectionImport,applyCollectionImport,adjustEffectiveOwned} from './lib/model';
@@ -106,7 +108,36 @@ export default function Home(){
  const [syncStatus,setSyncStatus]=useState<SyncStatusRecord|null>(()=>readSyncStatus(syncUrl,syncUserId));
  const [syncBusy,setSyncBusy]=useState(false);
  const [syncMessage,setSyncMessage]=useState('');
+ const [syncFailed,setSyncFailed]=useState(false);
  const [remoteConflict,setRemoteConflict]=useState<{revision:number;updatedAt:string;data:Workspace}|null>(null);
+ const [autoSync,setAutoSync]=useState(()=>{try{return localStorage.getItem('holocron-auto-sync')==='true'}catch{return false}});
+ const [autoRetry,setAutoRetry]=useState(0);
+ const [lastBackup,setLastBackup]=useState(()=>{try{return localStorage.getItem('holocron-last-backup')}catch{return null}});
+ const [backupClock,setBackupClock]=useState(Date.now());
+ const [catalogChanges,setCatalogChanges]=useState<{deckId:string;name:string;changed:string[]}[]>([]);
+ const catalogComparison=useRef<{before:Catalog;after:Catalog}|null>(null);
+ const [forceMatch,setForceMatch]=useState<MatchRecord|null>(null);
+ const [forceMatchOpen,setForceMatchOpen]=useState(false);
+ const forceAway=useRef(false);
+ const forceMatchPending=useRef(false);
+ const syncInFlight=useRef(false);
+ const resolvingSync=useRef(false);
+ const autoAttempt=useRef('');
+ useEffect(()=>{const timer=window.setInterval(()=>setBackupClock(Date.now()),60000);return()=>window.clearInterval(timer)},[]);
+ useEffect(()=>{const online=()=>{autoAttempt.current='';setAutoRetry(value=>value+1)};window.addEventListener('online',online);return()=>window.removeEventListener('online',online)},[]);
+ useEffect(()=>{if(loaded&&catalogComparison.current){const {before,after}=catalogComparison.current;setCatalogChanges(affectedDecks(before,after,current.current.decks));catalogComparison.current=null}},[loaded,catalog]);
+ useEffect(()=>{
+  try{
+   const raw=sessionStorage.getItem('holocron-force-match');
+   if(raw){const match=validatePlayRecords({practice:[],matches:[JSON.parse(raw)]}).matches[0];forceMatchPending.current=true;setForceMatch(match);setForceMatchOpen(true)}
+  }catch{setError('The pending ForceTable result could not be restored.')}
+ },[]);
+ useEffect(()=>{
+  const visibility=()=>{if(!forceMatchPending.current)return;if(document.visibilityState==='hidden')forceAway.current=true;else if(forceAway.current){forceAway.current=false;setForceMatchOpen(true)}};
+  document.addEventListener('visibilitychange',visibility);
+  window.addEventListener('focus',visibility);
+  return()=>{document.removeEventListener('visibilitychange',visibility);window.removeEventListener('focus',visibility)};
+ },[]);
  useEffect(()=>{const storage=navigator.storage;if(storage?.persist)void storage.persist().catch(()=>false)},[]);
  useEffect(()=>{
   if(!syncOpen||!syncToken){setSyncAccountLoaded(false);return}
@@ -186,6 +217,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
       ...latest.cards.filter(card=>!refreshedIds.has(card.id)),
      ]};
      await cacheCatalog(merged);
+     catalogComparison.current={before:latest,after:refreshed};
      catalogDate.current=Date.parse(merged.updated)||catalogDate.current;
      if(!cancelled)setCatalog(merged);
     }
@@ -235,7 +267,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   if(pending.current)void flush();
  }
  function update(next:Workspace){
-  if(!loaded||blocked.current)return false;
+  if(!loaded||blocked.current||resolvingSync.current){if(resolvingSync.current)setError('Wait for the cloud conflict to finish resolving before editing.');return false}
   if(next!==current.current){
    const label=changeLabel(current.current,next),at=new Date().toISOString(),previous=historyRef.current[0];
    const point={at,label,before:current.current};
@@ -255,7 +287,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  }
  function restoreHistory(index:number){
   const point=historyRef.current[index];
-  if(!point||!loaded||blocked.current)return;
+  if(!point||!loaded||blocked.current||resolvingSync.current)return;
   historyRef.current=[{at:new Date().toISOString(),label:'Before restore',before:current.current},...historyRef.current.filter((_,i)=>i!==index)].slice(0,8);
   setHistoryItems(historyRef.current);
   queueSave(point.before);
@@ -403,7 +435,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  function applyImport(){if(!preview||!importConfirmed||importInProgress.current)return;importInProgress.current=true;try{const d=preview.data;let next:Workspace;if(importType==='collection')next=applyCollectionImport(current.current,d,importMode as 'add'|'replace',byId);else if(importType==='deck')next={...current.current,decks:[...current.current.decks,d]};else next=d;if(!update(next)){importInProgress.current=false;return}if(importType==='deck'){setDeckId(d.uid);setTab('deck');setDeckView('cards')}setModal('');resetImportPreview();setNotice('Import complete. Your changes are being saved.');if(importType==='collection'){setTab('collection');setDeckId('');resetFilters()}}catch(e:any){importInProgress.current=false;setNotice(e.message)}}
  async function copyDeck(){if(!active)return;try{const text=JSON.stringify(deckExport(active),null,2);await nativeCall('copy',{text});setNotice('SWUDB JSON copied.')}catch{setNotice('Clipboard unavailable. Use SWUDB JSON to download the file.')}}
  function exportDeck(){if(!active)return;try{download(active.name.replace(/[^a-z0-9-]/gi,'_')+'_SWUDB.json',JSON.stringify(deckExport(active),null,2))}catch(e:any){setNotice(e.message)}}
- async function backup(){if(!loaded){setError('Wait for your collection to load before exporting a backup.');return}const file=createBackup(current.current);if(await download(file.name,file.text))setNotice('Backup: '+file.name+'. On iPhone or iPad, choose Save to Files → iCloud Drive. Restore with Import collection → Full backup.')}
+ async function backup(){if(!loaded){setError('Wait for your collection to load before exporting a backup.');return}const file=createBackup(current.current);if(await download(file.name,file.text)){const at=new Date().toISOString();setLastBackup(at);setBackupClock(Date.now());try{localStorage.setItem('holocron-last-backup',at)}catch{setError('Backup exported, but its time could not be saved on this device.')}setNotice('Backup: '+file.name+'. On iPhone or iPad, choose Save to Files → iCloud Drive. Restore with Import collection → Full backup.')}}
  function saveSyncEndpoint(){
   const base=normalizeSyncUrl(syncUrl),previous=localStorage.getItem('holocron-sync-url')||'';
   let previousBase='';
@@ -449,7 +481,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     setSyncPassword('');setSyncPasswordConfirm('');
     setSyncMessage('Signed in to your collection.');
    }
-  }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to connect to the sync server.')}
+  }catch(error){setSyncMessage(explainSyncError(error,'Unable to connect to the sync server.'))}
   finally{setSyncBusy(false)}
  }
  async function addSyncAccountCredentials(){
@@ -462,7 +494,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    storeSyncUsername(result.username||'');
    setSyncAccountUsername(result.username);setSyncAccountLoaded(true);setSyncPassword('');setSyncPasswordConfirm('');setSyncInviteCode('');
    setSyncMessage('Login saved for this collection. Use it on your other devices.');
-  }catch(error){setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to save the login.')}
+  }catch(error){setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':explainSyncError(error,'Unable to save the login.'))}
   finally{setSyncBusy(false)}
  }
  async function signOutSync(){
@@ -496,7 +528,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     ...refreshed.cards.map(card=>({...card,image:previous.get(card.id)?.image||card.image,back:previous.get(card.id)?.back||card.back})),
     ...(catalog?.cards||[]).filter(card=>!refreshedIds.has(card.id)),
    ]};
-   await cacheCatalog(merged);catalogDate.current=Date.parse(merged.updated)||catalogDate.current;setCatalog(merged);
+   const changes=catalog?affectedDecks(catalog,refreshed,current.current.decks):[];
+   await cacheCatalog(merged);catalogDate.current=Date.parse(merged.updated)||catalogDate.current;setCatalog(merged);setCatalogChanges(changes);
    setSyncMessage('Card information refreshed · '+new Date(merged.updated).toLocaleDateString()+'.');
   }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to refresh card information.')}
   finally{setSyncBusy(false)}
@@ -511,26 +544,36 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  }
  function showRemoteConflict(remote:{revision:number;updatedAt:string;data:Workspace}){setRemoteConflict(remote);setSyncMessage('The cloud workspace differs from this device. Choose which copy to keep.')}
  async function syncWorkspace(){
-  setSyncBusy(true);setSyncMessage('Checking cloud workspace…');
+  if(syncInFlight.current)return;
+  syncInFlight.current=true;
+  setSyncBusy(true);setSyncFailed(false);setSyncMessage('Checking cloud workspace…');
   try{
    const base=saveSyncEndpoint();
    if(!loaded||pending.current||saving.current)throw Error('Wait for local changes to finish saving before syncing.');
    if(!syncToken||!syncAuthMatches(base))throw Error('Sign in to this sync server before syncing your workspace.');
-   let remote:RemoteWorkspace;
-   try{remote=await getRemoteWorkspace(base,syncToken)}
-   catch(error){
-    if((error as Error&{status?:number}).status!==404)throw error;
-    const saved=await putRemoteWorkspace(base,syncToken,0,current.current);
-    rememberWorkspaceSynced(saved.revision,revision.current);setRemoteConflict(null);setSyncMessage('This device’s workspace is now backed up to your sync server.');return;
-   }
+   const snapshot=current.current,localRevision=revision.current;
    const savedRevision=Number(localStorage.getItem(syncCursorKey()));
    const cursorExists=localStorage.getItem(syncCursorKey())!==null&&Number.isSafeInteger(savedRevision);
-   if(!cursorExists||savedRevision!==remote.revision){showRemoteConflict(remote);setSyncOpen(true);return}
-   const saved=await putRemoteWorkspace(base,syncToken,remote.revision,current.current);
-   rememberWorkspaceSynced(saved.revision,revision.current);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
+   const result=await syncSnapshot({data:snapshot,localRevision,cursor:cursorExists?savedRevision:null,synced:syncStatus,read:()=>getRemoteWorkspace(base,syncToken),write:(expected,data)=>putRemoteWorkspace(base,syncToken,expected,data)});
+   if(result.kind==='conflict'){showRemoteConflict(result.remote);setSyncOpen(true);return}
+   rememberWorkspaceSynced(result.saved.revision,result.localRevision);setRemoteConflict(null);
+   setSyncMessage(result.kind==='created'?'This device’s workspace is now backed up to your sync server.':result.kind==='unchanged'?'Workspace is up to date.':'Workspace synced · '+new Date(result.saved.updatedAt).toLocaleString()+'.');
   }catch(error){
+   setSyncFailed(true);
    setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to sync this workspace.');
-  }finally{setSyncBusy(false)}
+   if((error as Error&{status?:number}).status===409)setSyncOpen(true);
+  }finally{syncInFlight.current=false;setSyncBusy(false)}
+ }
+ useEffect(()=>{
+  if(!autoSync||!syncToken||!loaded||syncBusy||remoteConflict||pending.current||saving.current||blocked.current)return;
+  const key=syncToken+':'+revision.current;
+  if(autoAttempt.current===key)return;
+  const timer=window.setTimeout(()=>{autoAttempt.current=key;void syncWorkspace()},2000);
+  return()=>window.clearTimeout(timer);
+ },[autoSync,syncToken,loaded,syncBusy,remoteConflict,workspace,status,autoRetry]);
+ function changeAutoSync(enabled:boolean){
+  try{localStorage.setItem('holocron-auto-sync',String(enabled));setAutoSync(enabled);autoAttempt.current=''}
+  catch{setSyncMessage('Unable to save the automatic sync setting on this device.')}
  }
  function openHeaderSync(){
   setSyncMessage('');
@@ -539,6 +582,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  }
  async function resolveWorkspaceConflict(choice:'cloud'|'device'){
   if(!remoteConflict)return;
+  resolvingSync.current=true;
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
@@ -553,8 +597,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     current.current=record.data;revision.current=record.revision;setWorkspace(record.data);setStatus('Saved on this device');setError('');
     rememberWorkspaceSynced(remoteConflict.revision,record.revision);setSyncMessage('Cloud workspace restored to this device.');
    }else{
-    const saved=await putRemoteWorkspace(base,syncToken,remoteConflict.revision,current.current);
-    rememberWorkspaceSynced(saved.revision,revision.current);setSyncMessage('This device’s workspace replaced the cloud copy.');
+    if(pending.current||saving.current)throw Error('Wait for local changes to finish saving before replacing the cloud copy.');
+    const snapshot=current.current,localRevision=revision.current;
+    const saved=await putRemoteWorkspace(base,syncToken,remoteConflict.revision,snapshot);
+    rememberWorkspaceSynced(saved.revision,localRevision);setSyncMessage('This device’s workspace replaced the cloud copy.');
    }
    setRemoteConflict(null);
   }catch(error){
@@ -563,9 +609,9 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     try{showRemoteConflict(await getRemoteWorkspace(saveSyncEndpoint(),syncToken))}
     catch(refreshError){setSyncMessage(refreshError instanceof Error?refreshError.message:'The cloud workspace changed again. Retry sync.')}
    }else setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
-  }finally{setSyncBusy(false)}
+  }finally{resolvingSync.current=false;setSyncBusy(false)}
  }
- function play(){if(!active||!confirm('This opens ForceTable and sends the selected deck in the link. Continue?'))return;try{const url=forceTableDeckUrl(active);window.open(url,'_blank','noopener,noreferrer');setNotice('Deck sent to ForceTable. Select an opponent there; verify its imported count, especially for new sets.')}catch(e:any){setNotice(e.message)}}
+ function play(){if(!active||!confirm('This opens ForceTable and sends the selected deck in the link. Continue?'))return;if(forceMatch&&!confirm('There is an unrecorded ForceTable game. Replace it with a new game?'))return;try{const url=forceTableDeckUrl(active);const match:MatchRecord={uid:makeId(),deckId:active.uid,deckName:active.name,leader:active.leader,base:active.base,opponent:'',opponentLeader:'',opponentBase:'',result:'win',playedAt:new Date().toISOString(),rounds:0,myDamage:0,opponentDamage:0,notes:''};sessionStorage.setItem('holocron-force-match',JSON.stringify(match));forceMatchPending.current=true;setForceMatch(match);forceAway.current=true;window.open(url,'_blank','noopener,noreferrer');setNotice('Return here to record the result. If ForceTable did not open, allow pop-ups; verify the imported deck count there.')}catch(error){setNotice(error instanceof Error?error.message:'Unable to open ForceTable.')}}
  const browsingDeck=tab==='deck'&&active&&deckView==='cards';
  const results=useMemo(()=>{let list=cards;if(browsingDeck){const ids=new Set([active!.leader,active!.base,...active![section].map(x=>x.id)]);list=list.filter(c=>ids.has(c.id))}else if(tab==='lists'){const ids=new Set(workspace.lists?.find(l=>l.uid===listId)?.cards||[]);list=list.filter(c=>ids.has(c.id))}else if(tab==='favorites'){list=list.filter(c=>favorites.cards.includes(c.id))}else if(tab==='collection'){list=list.filter(c=>ownedExact(c.id)>0)}else if(!allPrintings)list=list.filter(c=>c.variant==='Normal'&&!c.foilOnly);const query=q.trim().toLowerCase();list=list.filter(c=>(!premierOnly||premierIds.has(c.id))&&(!query||[c.name,c.subtitle,c.id,c.text,c.backText,...c.traits,...c.keywords].join(' ').toLowerCase().includes(query))&&matchesAspects(c.aspects,aspect,aspectMode)&&matchesCardKinds(c,kinds)&&(!set||c.set===set)&&(!keyword||c.keywords.includes(keyword))&&(!trait||c.traits.includes(trait))&&(!rarity||c.rarity===rarity)&&(!variant||c.variant===variant)&&(!arena||c.arena===arena)&&(!ability||(c.text+' '+c.backText+' '+c.epic).toLowerCase().includes(ability.toLowerCase()))&&(!artist||c.artist===artist)&&(!maxCost||(c.cost!==null&&c.cost<=Number(maxCost)))&&(!minPower||(c.power!==null&&c.power>=Number(minPower)))&&(!minHp||(c.hp!==null&&c.hp>=Number(minHp)))&&(!onlyOwned||(owned.get(c.core)||0)>0)&&(!onlyUnowned||tab==='collection'||!owned.get(c.core))&&(!finish||collection.some(x=>x.id===c.id&&x.foil===(finish==='foil')&&x.count>0)));return list.slice().sort((a,b)=>compareCards(a,b,sort,owned,foils))},[catalog,collection,workspace.favorites,tab,browsingDeck,active,section,q,aspect,aspectMode,listId,workspace.lists,kinds,set,keyword,trait,rarity,finish,variant,arena,ability,artist,maxCost,minPower,minHp,onlyOwned,onlyUnowned,premierOnly,allPrintings,sort,owned,foils,premierIds]);
  useEffect(()=>setLimit(48),[q,aspect,aspectMode,listId,workspace.lists,kinds,set,keyword,trait,rarity,finish,variant,arena,ability,artist,maxCost,minPower,minHp,onlyOwned,onlyUnowned,premierOnly,allPrintings,tab,deckView,favoriteView]);
@@ -653,7 +699,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  function openDeckSection(value:string){setDeckView(value);resetFilters();if(value==='build')setView('grid')}
  function metricJump(target:'all'|'unique'|'foil'|'catalog'|'sets'|'prints'){resetFilters();if(target==='foil')setFinish('foil');if(target==='unique')setView('table');if(target==='prints')setAllPrintings(true);requestAnimationFrame(()=>{document.getElementById('card-results')?.scrollIntoView({block:'start'});if(target==='sets'){const panel=document.querySelector('.filter-panel') as HTMLDetailsElement|null;if(panel)panel.open=true;(document.querySelector('select[aria-label="Set"]') as HTMLSelectElement|null)?.focus()}})}
  const hasLocalSyncChanges=syncStatus!==null&&(revision.current!==syncStatus.localRevision||!!pending.current||saving.current);
- const headerSyncState=!syncToken?'disconnected':!loaded?'checking':remoteConflict?'conflict':!syncStatus?'never':hasLocalSyncChanges?'pending':'synced';
+ const headerSyncState=!syncToken?'disconnected':!loaded?'checking':remoteConflict||syncFailed?'conflict':!syncStatus?'never':hasLocalSyncChanges?'pending':'synced';
  const headerSyncLabel=headerSyncState==='disconnected'?'Not connected':headerSyncState==='checking'?'Checking…':headerSyncState==='conflict'?'Needs attention':headerSyncState==='never'?'Not synced yet':headerSyncState==='pending'?'Changes not synced':'In sync';
  const lastSyncedLabel=syncStatus?new Date(syncStatus.lastSyncedAt).toLocaleString():'Never';
  return <HighlightProvider value={{settings:cardHighlights,context:{premierIds,ownedByCore:owned,deckCores}}}><div className="shell"><header className="workspace-header">
@@ -670,7 +716,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
      {tab==='deck'&&active&&<><FavoriteButton active={favorites.decks.includes(active.uid)} label={active.name} disabled={!loaded} onClick={()=>optionAction(()=>favorite('decks',active.uid))}/><button onClick={()=>optionAction(()=>{void copyDeck()})}><Copy size={15}/>Copy deck JSON</button><button onClick={()=>optionAction(exportDeck)}><Download size={15}/>Export deck JSON</button><button onClick={()=>optionAction(play)}><Play size={15}/>Play on ForceTable</button></>}
      {tab==='lists'&&selectedList&&<><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('csv'))}><Download size={15}/>Export list CSV</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>downloadList('json'))}><Download size={15}/>Export list JSON</button><button disabled={!catalog||!selectedList.cards.length} onClick={()=>optionAction(()=>setMassEntry({name:selectedList.name,...exportMassEntry(selectedList,byId)}))}><Copy size={15}/>TCGplayer Mass Entry</button><button onClick={()=>optionAction(()=>{const name=prompt('Rename list',selectedList.name);if(name?.trim())update({...current.current,lists:lists.map(l=>l.uid===listId?{...l,name:name.trim().slice(0,200)}:l)})})}>Rename list</button><button className="danger" onClick={()=>optionAction(()=>{if(confirm('Delete this list? Your cards and decks will stay unchanged.')){update({...current.current,lists:lists.filter(l=>l.uid!==listId)});setListId('')}})}>Delete list</button></>}
     </div>
-    <div className="options-section"><strong>Display & history</strong><label className="home-page-setting">Home page<select aria-label="Home page" value={homePage} onChange={event=>chooseHomePage(normalizeHomePage(event.target.value))}>{homePageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Opens at startup and when you select the Holocron logo.</small></label><button onClick={()=>optionAction(()=>nav('updates'))}>Updates</button><button onClick={()=>optionAction(()=>{setSyncMessage('');setSyncOpen(true)})}><RotateCw size={15}/>Sync & card updates</button><button disabled={!loaded||!historyItems.length} onClick={()=>optionAction(()=>setHistoryOpen(true))}><RotateCw size={15}/>History ({historyItems.length})</button><HighlightOptions disabled={!loaded} value={cardHighlights} onChange={next=>preferences({highlight:next,rarityBorders:false})}/><button disabled={!loaded} aria-pressed={showDeckMembership} onClick={()=>preferences({showDeckMembership:!showDeckMembership})}>Show decks on cards {showDeckMembership?'On':'Off'}</button><ThemePicker theme={theme} disabled={!loaded} onSelect={next=>preferences({theme:next})}/></div>
+    <div className="options-section"><strong>Workspace</strong><button onClick={()=>optionAction(()=>{setSyncMessage('');setSyncOpen(true)})}><RotateCw size={15}/>Sync, backups & card updates</button><button disabled={!loaded||!historyItems.length} onClick={()=>optionAction(()=>setHistoryOpen(true))}><RotateCw size={15}/>History ({historyItems.length})</button><button onClick={()=>optionAction(()=>nav('updates'))}>Release updates</button></div>
+    <div className="options-section"><strong>Display</strong><label className="home-page-setting">Home page<select aria-label="Home page" value={homePage} onChange={event=>chooseHomePage(normalizeHomePage(event.target.value))}>{homePageOptions.map(option=><option key={option.value} value={option.value}>{option.label}</option>)}</select><small>Opens at startup and when you select the Holocron logo.</small></label><HighlightOptions disabled={!loaded} value={cardHighlights} onChange={next=>preferences({highlight:next,rarityBorders:false})}/><button disabled={!loaded} aria-pressed={showDeckMembership} onClick={()=>preferences({showDeckMembership:!showDeckMembership})}>Show decks on cards {showDeckMembership?'On':'Off'}</button><ThemePicker theme={theme} disabled={!loaded} onSelect={next=>preferences({theme:next})}/></div>
     <div className="options-status"><HardDrive size={15}/><span>{status}</span>{status==='Unsaved changes'&&<button onClick={()=>void flush()}>Retry</button>}</div><div className="options-version">Holocron {siteVersion}</div>
    </div></details>
   </nav></div>
@@ -685,6 +732,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  <main>
  {error&&<div className="error-banner"><AlertCircle size={18}/><span>{error}</span><button onClick={backup}>Backup</button>{pending.current&&!blocked.current&&<button onClick={flush}>Retry save</button>}<button onClick={()=>location.reload()}>Reload</button></div>}
  {notice&&<div className="notice" role="status">{notice}<button aria-label="Dismiss notification" onClick={()=>setNotice('')}><X size={16}/></button></div>}
+ {forceMatch&&!forceMatchOpen&&<div className="notice">ForceTable game awaiting a result. <button onClick={()=>setForceMatchOpen(true)}>Record result</button></div>}
+ {catalogChanges.length>0&&<div className="notice">Updated card information affects {catalogChanges.length} saved {catalogChanges.length===1?'deck':'decks'}. <button onClick={()=>setSyncOpen(true)}>Review changes</button></div>}
  <div className="content"><div className="page-heading"><div className="page-heading-title"><div className="eyebrow">YOUR GALAXY, ORGANIZED</div><h1>{tab==='updates'?'Updates':tab==='lists'||tab==='favorites'?'Lists & favorites':tab==='guides'?'Your guide to the game':tab==='tools'?'Play tools':tab==='catalog'?'The card catalog':tab==='collection'?'Your collection':tab==='decks'?'Your deck workshop':active?.name||'Deck workshop'}</h1><p>{tab==='updates'?'What changed in Holocron.':tab==='lists'||tab==='favorites'?'Keep your lists and favorite cards or decks together.':tab==='guides'?'Learn the rules. Build your plan. Keep the useful answers close.':tab==='tools'?'Draw through a deck or track an in-person game.':tab==='catalog'?'Explore the galaxy. Find the cards that make your deck yours.':tab==='collection'?'Every card accounted for. Every possibility in view.':tab==='decks'?'Build something worth bringing to the table.':'Fine-tune the list. Get to know every card.'}</p></div><div className="page-heading-content">
 {(tab==='catalog'||tab==='collection')&&<div className="metrics compact-metrics" aria-label="Collection shortcuts"><button className="metric-card" onClick={()=>metricJump(tab==='catalog'?'catalog':'all')}><span>{tab==='catalog'?'CARDS TO DISCOVER':'TOTAL CARDS'}</span><strong>{tab==='catalog'?cards.filter(c=>c.variant==='Normal'&&!c.foilOnly).length.toLocaleString():count(workspace.collection).toLocaleString()}</strong><small>{tab==='catalog'?'Browse standard printings':'View all owned cards'}</small></button><button className="metric-card" onClick={()=>metricJump(tab==='catalog'?'sets':'unique')}><span>{tab==='catalog'?'SETS IN THE ARCHIVE':'UNIQUE PRINTINGS'}</span><strong>{tab==='catalog'?catalog?.sets.length||'—':new Set(collection.map(x=>x.id)).size.toLocaleString()}</strong><small>{tab==='catalog'?'Choose a set':'View printing rows'}</small></button><button className="metric-card" onClick={()=>metricJump(tab==='catalog'?'prints':'foil')}><span>{tab==='catalog'?'ART PRINTINGS':'FOIL CARDS'}</span><strong>{tab==='catalog'?cards.length.toLocaleString():count(collection.filter(x=>x.foil)).toLocaleString()}</strong><small>{tab==='catalog'?'Browse all variants':'View owned foil cards'}</small></button></div>}
 {(tab==='lists'||tab==='favorites')&&<div className="favorite-tabs list-hub-tabs" role="group" aria-label="Lists and favorites"><button aria-pressed={tab==='lists'} onClick={()=>nav('lists')}>My lists ({lists.length})</button><button aria-pressed={tab==='favorites'&&favoriteView==='cards'} onClick={()=>{setFavoriteView('cards');nav('favorites')}}>Favorite cards ({favorites.cards.length})</button><button aria-pressed={tab==='favorites'&&favoriteView==='decks'} onClick={()=>{setFavoriteView('decks');nav('favorites')}}>Favorite decks ({workspace.decks.filter(d=>favorites.decks.includes(d.uid)).length})</button></div>}
@@ -819,7 +868,9 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   <div className="eyebrow">YOUR DEVICES, IN STEP</div><h2>Sync & card updates</h2>
   <p>Each person should create a separate account and collection. Use the same username and password only on that person’s devices; the app remembers each device’s sign-in. Account creation requires an invite code from the app owner.</p>
   <label>Sync server URL<input type="url" required placeholder="https://holocron.example.com" value={syncUrl} onChange={event=>setSyncUrl(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
-  {syncToken?<><p>Connected to your collection{syncAccountUsername?` as ${syncAccountUsername}`:''}. Syncing is manual; changes are not sent until you choose Sync workspace.</p>
+  {syncToken?<><p>Connected to your collection{syncAccountUsername?` as ${syncAccountUsername}`:''}.</p>
+  <label className="checkbox"><input type="checkbox" checked={autoSync} onChange={event=>changeAutoSync(event.target.checked)}/> Automatically sync on startup and after local changes</label>
+  <p className="muted">Auto-sync checks for conflicts before replacing either copy. If offline or a sync fails, use Sync workspace to retry.</p>
   {!syncAccountLoaded?<p className="muted">Checking your account…</p>:syncAccountUsername?<p className="muted">Use this username and password to sign in on your other devices. Your password is not stored in the app.</p>:<form onSubmit={event=>{event.preventDefault();void addSyncAccountCredentials()}}>
    <p>Set a username and password for this collection. Your existing collection stays connected. Use the invite code supplied by the app owner.</p>
    <label>Username<input required value={syncUsername} maxLength={32} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={event=>setSyncUsername(event.target.value)} disabled={syncBusy}/></label>
@@ -831,7 +882,6 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   </form>}
   <div className="actions">
    <button className="primary" disabled={syncBusy||!loaded||!!pending.current||saving.current} onClick={()=>void syncWorkspace()}><RotateCw size={15}/>{syncBusy?'Working…':'Sync workspace'}</button>
-   <button disabled={syncBusy} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
    <button disabled={syncBusy} onClick={()=>{if(confirm('Sign out every device on this account, including this one?'))void signOutAllSync()}}>Sign out all devices</button>
    <button disabled={syncBusy} onClick={()=>void signOutSync()}>Sign out</button>
   </div></>:<>
@@ -844,8 +894,15 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
      <button type="button" disabled={syncBusy} onClick={()=>{setSyncAuthMode(syncAuthMode==='login'?'register':'login');setSyncPasswordConfirm('');setSyncMessage('')}}>{syncAuthMode==='login'?'Create a new account':'I already have an account'}</button>
     </div>
    </form>
-   <button type="button" disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
   </>}
+  <div className="sync-maintenance">
+   <h3>Backup & card data</h3>
+   <p>Last backup export: {elapsedBackup(lastBackup,backupClock)}{lastBackup?` (${new Date(lastBackup).toLocaleString()})`:''}. Backups are separate from sync and are stored wherever you save the file.</p>
+   <button disabled={!loaded} onClick={()=>void backup()}><Download size={15}/>Backup workspace</button>
+   <p>Card data updated: {catalog&&Number.isFinite(Date.parse(catalog.updated))?new Date(catalog.updated).toLocaleString():'Unknown'}.</p>
+   <button disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
+   {catalogChanges.length>0&&<details><summary>Updated cards in {catalogChanges.length} saved {catalogChanges.length===1?'deck':'decks'}</summary><ul>{catalogChanges.map(item=><li key={item.deckId}>{item.name}: {item.changed.map(id=>`${byId.get(id)?.name??id} (${id})`).join(', ')}</li>)}</ul><p>Review these cards and current format rules before playing. This comparison lasts until the next refresh or page reload.</p></details>}
+  </div>
   {remoteConflict&&<div className="sync-conflict" role="alert">
    <strong>These workspaces differ.</strong><p>Cloud revision {remoteConflict.revision}, saved {new Date(remoteConflict.updatedAt).toLocaleString()}. Choose one copy; the other will be replaced. Back up this device first if needed.</p>
    <div className="actions">
@@ -853,9 +910,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     <button className="danger" disabled={syncBusy||pending.current!==null||saving.current} onClick={()=>{if(confirm('Replace the cloud workspace with this device’s copy? This affects every device on your account.'))void resolveWorkspaceConflict('device')}}>Replace cloud with this device</button>
    </div>
   </div>}
-  {syncMessage&&<p className={syncMessage.includes('differs')||syncMessage.includes('Unable')?'warning':'muted'} role="status">{syncMessage}</p>}
+  {syncMessage&&<p className={syncMessage.includes('differs')||syncMessage.includes('Unable')||syncMessage.includes('disabled on this server')?'warning':'muted'} role="status">{syncMessage}</p>}
   <p className="muted">Use HTTPS except for a sync server running on this device. Export a backup before resolving a workspace conflict.</p>
  </section></Modal>}
+ {forceMatch&&forceMatchOpen&&<RecordMatch record={forceMatch} byId={byId} external onSave={match=>{if(!recordMatch(match))return false;try{sessionStorage.removeItem('holocron-force-match')}catch{setError('Result saved, but the pending game could not be cleared from this session.')}forceMatchPending.current=false;setForceMatch(null);setNotice('ForceTable result saved to match history.');return true}} onClose={()=>setForceMatchOpen(false)} onDiscard={()=>{if(!confirm('Discard this unrecorded game?'))return;try{sessionStorage.removeItem('holocron-force-match');forceMatchPending.current=false;setForceMatch(null);setForceMatchOpen(false)}catch{setError('Unable to discard the pending game from this session.')}}}/>}
  {listCard&&<Modal label="Add card to lists" onDismiss={()=>setListCard(null)}><section className="modal"><button className="close" aria-label="Close lists" onClick={()=>setListCard(null)}><X/></button><h2>Add to lists</h2><p>{label(listCard)}</p><div className="list-choices">{lists.map(l=><label className="checkbox" key={l.uid}><input type="checkbox" checked={l.cards.includes(listCard.id)} onChange={()=>update({...current.current,lists:lists.map(x=>x.uid===l.uid?{...x,cards:x.cards.includes(listCard.id)?x.cards.filter(id=>id!==listCard.id):[...x.cards,listCard.id]}:x)})}/>{l.name}</label>)}</div><label>New list name<input value={listName} maxLength={200} onChange={e=>setListName(e.target.value)} onKeyDown={e=>e.key==='Enter'&&createList()}/></label><button className="primary full" disabled={!listName.trim()} onClick={createList}>Create list and add card</button></section></Modal>}
  {starterPickerOpen&&<StarterDeckPicker initialId={starterInitialId} byId={byId} decks={workspace.decks} onImport={importStarter} onClose={()=>setStarterPickerOpen(false)}/>}
  {historyOpen&&<Modal label="Change history" onDismiss={()=>setHistoryOpen(false)}><section className="modal history-modal"><div className="section-line"><h2>Change history</h2><button onClick={()=>setHistoryOpen(false)}>Close</button></div><p>Recent changes on this device. Restore a point to undo changes; your current state becomes a new restore point. Full backups remain the safest long-term copy.</p>{historyItems.map((item,index)=><div className="text-row" key={item.at+index}><span><strong>{item.label}</strong><small>{new Date(item.at).toLocaleString()}</small></span><button onClick={()=>{restoreHistory(index);setHistoryOpen(false)}}>Restore</button></div>)}</section></Modal>}

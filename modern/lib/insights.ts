@@ -16,10 +16,12 @@ export function deckDemand(deck:Deck,byId:ReadonlyMap<string,Card>){
 }
 export function deckReadiness(deck:Deck,workspace:Workspace,byId:ReadonlyMap<string,Card>){
  const owned=ownedByCore(workspace,byId);
- const shortages=[...deckDemand(deck,byId)].map(([core,row])=>({...row,core,owned:owned.get(core)||0,missing:Math.max(0,row.count-(owned.get(core)||0))})).filter(row=>row.missing>0);
+ const demand=[...deckDemand(deck,byId)].map(([core,row])=>({...row,core,owned:owned.get(core)||0,missing:Math.max(0,row.count-(owned.get(core)||0))}));
+ const shortages=demand.filter(row=>row.missing>0);
  const issues=deckWarnings(deck,new Map(byId));
  const missing=shortages.reduce((n,row)=>n+row.missing,0);
- return {shortages,missing,issues,buildable:missing===0&&issues.length===0};
+ const total=demand.reduce((n,row)=>n+row.count,0);
+ return {shortages,missing,total,issues,buildable:missing===0&&issues.length===0};
 }
 export type Replacement={card:Card;available:number;score:number;reasons:string[];penalty:number};
 export function replacementsFor(target:Card,deck:Deck,workspace:Workspace,byId:ReadonlyMap<string,Card>,legalIds?:ReadonlySet<string>):Replacement[]{

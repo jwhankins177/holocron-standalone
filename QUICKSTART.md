@@ -83,14 +83,19 @@ sign-in for 30 days; if its browser data is cleared or the sign-in expires,
 sign in again with your username and password. Passwords are not stored in the
 app. Save yours in a password manager; there is no email-based password reset.
 
-Sync is manual; changes are not sent until you choose **Sync workspace**.
-When the device and cloud copies differ, choose which copy to keep. Export a
+Sync is manual by default. In **Sync & card updates**, opt into automatic sync
+on this device to check on startup and after local changes. If sync fails,
+use **Sync workspace** to retry. When the device and cloud copies differ,
+choose which copy to keep; automatic sync never chooses for you. Export a
 workspace backup before resolving a conflict.
 
 ## Backups and updates
 
 - Save independent backups from **Options → Backup workspace**. The Railway
   volume stores the sync database, but is not a substitute for backups.
+- **Sync & card updates** also offers a backup export and shows the time since
+  the last export on this browser. The browser download flow may not confirm
+  where the file was saved; check your chosen location.
 - Configure manual or scheduled Railway volume backups in the service's
   **Backups** tab. See [Railway volume backups](https://docs.railway.com/volumes/backups).
 - Keep using the same app URL and browser profile. Clearing browser site data
@@ -108,9 +113,13 @@ workspace backup before resolving a conflict.
   not migrated to this login; their stored cloud workspaces remain on the
   server but are not accessible through the current app.
 - **Play on ForceTable** sends the selected deck in an external link; the app
-  asks for confirmation before opening it.
+  asks for confirmation before opening it. When you return, enter the result
+  and notes to add it to match history. ForceTable does not send results back
+  automatically; a pending result is retained in the current browser tab.
 - Railway deploys code updates when changes reach its connected branch. The
   bundled rules remain snapshots; **Get latest card info** fetches current card
-  data from SWU-DB and caches it on this device.
+  data from SWU-DB and caches it on this device. The sync dialog shows the
+  catalog date and flags saved decks containing changed card information for
+  the current session; format rules still need separate verification.
 - Choose **Options → Refresh site** to check for and apply the latest web app
   build without clearing your sign-in or local collection.

@@ -16,11 +16,23 @@
 .options-section .theme-options{position:static;width:100%;max-height:240px;box-shadow:none}
 .options-status{display:flex;align-items:center;gap:7px;padding:10px 12px;font-size:11px;color:var(--muted)}
 .options-status button{margin-left:auto;padding:5px 8px;font-size:11px}
-.sync-dialog{display:grid;gap:10px}
-.sync-dialog>label{display:grid;gap:5px;font-size:12px}
-.sync-dialog>label input{width:100%;min-width:0}
+.sync-dialog{display:grid;gap:12px;align-content:start}
+.modal.sync-dialog>p,.modal.sync-dialog>.eyebrow{margin:0}
+.modal.sync-dialog>label{display:grid;gap:5px;margin:0;font-size:12px}
+.modal.sync-dialog>label input:not([type=checkbox]){width:100%;min-width:0;margin:0}
 .sync-dialog>.actions{display:flex;flex-wrap:wrap;gap:7px}
 .sync-dialog>.actions button{min-height:36px}
+.modal.sync-dialog>label.checkbox{display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;font-size:13px}
+.modal.sync-dialog>label.checkbox input{width:auto;min-width:0;margin:0;flex:none}
+.sync-dialog form{display:grid;gap:12px}
+.sync-dialog form>label{display:grid;gap:5px;font-size:12px}
+.sync-dialog form>label input{width:100%;min-width:0}
+.sync-dialog form p{margin:0}
+.sync-dialog form .actions{display:flex;flex-wrap:wrap;gap:7px}
+.sync-maintenance{display:grid;justify-items:start;gap:8px;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
+.sync-maintenance h3,.sync-maintenance p{margin:0}
+.sync-maintenance p{color:var(--muted);font-size:12px;line-height:1.5}
+.sync-maintenance details{max-width:100%;overflow-wrap:anywhere}
 .sync-conflict{display:grid;gap:7px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft,#20312a)}
 .sync-conflict>p{margin:0;color:var(--muted);font-size:12px}
 .sync-conflict .actions{display:flex;flex-wrap:wrap;gap:7px}
