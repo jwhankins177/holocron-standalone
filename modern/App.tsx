@@ -32,6 +32,7 @@ import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
 import {createPairingCode,getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,validateCatalog} from './lib/sync-api';
 import type {RemoteWorkspace} from './lib/sync-api';
+import {readSyncSession} from './lib/sync-session';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
 import {Box,Layers,Library,Search,Upload,Download,Plus,ArrowUpRight,Grid2X2,List,SlidersHorizontal,X,ChevronLeft,ChevronRight,Check,HardDrive,RotateCw,Trash2,Copy,BarChart3,Play,Bookmark,Minus,CheckCircle2,AlertCircle,ArrowDownUp,BookOpen,Shield,Package,Settings2,Wrench} from 'lucide-react';
 import {Card,Catalog,Deck,Owned,Workspace,emptyWorkspace,parseCollection,mergeCollection,exportCollection,exportCardList,exportMassEntry,parseDeck,deckExport,forceTableDeckUrl,aspectPenalty,probability,deckWarnings,validateBackup,makeId,createBackup,toggleFavorite,matchesAspects,deckMembership,CollectionResolution,effectiveCollection,unresolvedCollection,setCollectionResolution,parseCollectionImport,applyCollectionImport,adjustEffectiveOwned} from './lib/model';
@@ -41,6 +42,15 @@ const siteVersion=`v${APP_VERSION} · standalone`;
 const HOME_PAGE_KEY='holocron-home-page';
 function readHomePage():HomePage{
  try{return normalizeHomePage(localStorage.getItem(HOME_PAGE_KEY))}catch{return 'catalog'}
+}
+function readStoredSyncSession(){
+ try{
+  if(localStorage.getItem('holocron-sync-email')){
+   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
+   return null;
+  }
+  return readSyncSession(localStorage,normalizeSyncUrl);
+ }catch{return null}
 }
 type SyncStatusRecord={lastSyncedAt:string;localRevision:number;remoteRevision:number};
 function readSyncStatus(base:string,userId:number):SyncStatusRecord|null{
@@ -80,12 +90,13 @@ export default function Home(){
  const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{return defaultSyncServer()}});
  const [syncCode,setSyncCode]=useState('');
  const [syncCodeExpiresAt,setSyncCodeExpiresAt]=useState('');
- const [syncToken,setSyncToken]=useState(()=>{try{if(localStorage.getItem('holocron-sync-email')){localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');return ''}return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
- const [syncUserId,setSyncUserId]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?Number(localStorage.getItem('holocron-sync-user-id'))||0:0}catch{return 0}});
+ const [syncToken,setSyncToken]=useState(()=>readStoredSyncSession()?.token||'');
+ const [syncUserId,setSyncUserId]=useState(()=>readStoredSyncSession()?.userId||0);
  const [syncStatus,setSyncStatus]=useState<SyncStatusRecord|null>(()=>readSyncStatus(syncUrl,syncUserId));
  const [syncBusy,setSyncBusy]=useState(false);
  const [syncMessage,setSyncMessage]=useState('');
  const [remoteConflict,setRemoteConflict]=useState<{revision:number;updatedAt:string;data:Workspace}|null>(null);
+ useEffect(()=>{const storage=navigator.storage;if(storage?.persist)void storage.persist().catch(()=>false)},[]);
  useEffect(()=>{if(!loaded||!catalog)return;const earned=collectionAchievements(workspace,catalog).filter(a=>a.earned&&!workspace.achievementUnlocks?.[a.id]);if(earned.length)update({...current.current,achievementUnlocks:{...current.current.achievementUnlocks,...Object.fromEntries(earned.map(a=>[a.id,new Date().toISOString()]))}},false,false)},[loaded,catalog,workspace.collection,workspace.resolutions,workspace.decks,workspace.achievementUnlocks]);
  function importStarter(starter:StarterDeck){try{const result=addStarterDeck(current.current,starter);if(!result.existing&&!update(result.workspace))return 'The deck could not be saved. Please resolve the workspace save error and try again.';setStarterPickerOpen(false);setFolderFilter('');setSection('deck');nav('deck');setDeckId(result.deck.uid);setDeckView('cards');setView('grid');resetFilters();setNotice(result.existing?'Opened your existing deck.':'Starter added to My decks. Collection quantities are unchanged.');return undefined}catch(error){return error instanceof Error?error.message:'Unable to import starter deck'}}
  const [collectionCard,setCollectionCard]=useState<Card|null>(null);
@@ -367,14 +378,19 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  async function backup(){if(!loaded){setError('Wait for your collection to load before exporting a backup.');return}const file=createBackup(current.current);if(await download(file.name,file.text))setNotice('Backup: '+file.name+'. On iPhone or iPad, choose Save to Files → iCloud Drive. Restore with Import collection → Full backup.')}
  function saveSyncEndpoint(){
   const base=normalizeSyncUrl(syncUrl),previous=localStorage.getItem('holocron-sync-url')||'';
+  let previousBase='';
+  try{if(previous)previousBase=normalizeSyncUrl(previous)}catch{}
   localStorage.setItem('holocron-sync-url',base);
   setSyncUrl(base);
-  if(previous&&previous!==base){
+  if(previous&&previousBase!==base){
    localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
    setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(null);setRemoteConflict(null);
   }
   return base;
  }
+  function syncAuthMatches(base:string){
+   try{return normalizeSyncUrl(localStorage.getItem('holocron-sync-auth-url')||'')===base}catch{return false}
+  }
  function discardExpiredSyncSession(error:unknown){
   if((error as Error&{status?:number}).status!==401)return false;
   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
@@ -405,7 +421,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
-   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Connect to your collection before generating a pairing code.');
+   if(!syncToken||!syncAuthMatches(base))throw Error('Connect to your collection before generating a pairing code.');
    const result=await createPairingCode(base,syncToken);
    setSyncCode(result.code);
    setSyncCodeExpiresAt(result.expiresAt);
@@ -415,7 +431,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  }
  async function signOutSync(){
   setSyncBusy(true);setSyncMessage('');
-  try{const authBase=localStorage.getItem('holocron-sync-auth-url'),base=saveSyncEndpoint();if(syncToken&&authBase===base)await logoutAccount(base,syncToken)}catch(error){setSyncMessage(error instanceof Error?error.message:'The server sign-out could not be confirmed.')}
+  try{const base=saveSyncEndpoint();if(syncToken&&syncAuthMatches(base))await logoutAccount(base,syncToken)}catch(error){setSyncMessage(error instanceof Error?error.message:'The server sign-out could not be confirmed.')}
   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
   setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setRemoteConflict(null);
   setSyncBusy(false);
@@ -448,7 +464,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   try{
    const base=saveSyncEndpoint();
    if(!loaded||pending.current||saving.current)throw Error('Wait for local changes to finish saving before syncing.');
-   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Sign in to this sync server before syncing your workspace.');
+   if(!syncToken||!syncAuthMatches(base))throw Error('Sign in to this sync server before syncing your workspace.');
    let remote:RemoteWorkspace;
    try{remote=await getRemoteWorkspace(base,syncToken)}
    catch(error){
@@ -475,7 +491,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
-   if(!syncToken||localStorage.getItem('holocron-sync-auth-url')!==base)throw Error('Sign in to this sync server before resolving the workspace conflict.');
+   if(!syncToken||!syncAuthMatches(base))throw Error('Sign in to this sync server before resolving the workspace conflict.');
    if(choice==='cloud'){
     if(pending.current||saving.current)throw Error('Wait for local changes to finish saving before restoring.');
     const restored=validateBackup(remoteConflict.data,byId),previous=current.current;
