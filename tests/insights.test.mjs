@@ -12,6 +12,7 @@ test('readiness combines foils, variants and mapped quantities exactly once',()=
  const result=deckReadiness(makeDeck(),workspace,byId);
  assert.equal(result.shortages.some(row=>row.core==='SOR_100'),false);
  assert.equal(result.missing,2); // leader and base still required
+ assert.equal(result.total,5);
  assert.equal(result.buildable,false); // unfinished main deck must never claim readiness
 });
 

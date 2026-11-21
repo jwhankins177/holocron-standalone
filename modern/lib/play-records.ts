@@ -18,3 +18,13 @@ export function saveMatch(records:PlayRecords|undefined,match:MatchRecord):PlayR
  return validatePlayRecords({practice:records?.practice??[],matches:[match,...matches.filter(m=>m.uid!==match.uid)]});
 }
 export function matchStats(matches:MatchRecord[]){const wins=matches.filter(m=>m.result==='win').length,losses=matches.filter(m=>m.result==='loss').length,draws=matches.length-wins-losses;return {wins,losses,draws,winRate:matches.length?Math.round(wins/matches.length*100):0}}
+export function opponentStats(matches:MatchRecord[]){
+ const groups=new Map<string,{name:string;matches:MatchRecord[]}>();
+ for(const match of matches){
+  const name=match.opponent.trim(),key=name.toLocaleLowerCase();
+  if(!name)continue;
+  const group=groups.get(key);
+  if(group)group.matches.push(match);else groups.set(key,{name,matches:[match]});
+ }
+ return [...groups.values()].map(group=>({name:group.name,...matchStats(group.matches)})).sort((a,b)=>a.name.localeCompare(b.name));
+}

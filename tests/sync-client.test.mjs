@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeSyncUrl,validateCatalog} from '../modern/lib/sync-api.ts';
+import {explainSyncError,normalizeSyncUrl,validateCatalog} from '../modern/lib/sync-api.ts';
+
+test('disabled account creation explains the server configuration needed to enable it',()=>{
+  const error=Object.assign(new Error('Account creation is not enabled.'),{detail:{error:'registration_disabled'}});
+  assert.match(explainSyncError(error,'fallback'),/HOLOCRON_REGISTRATION_CODE/);
+  assert.equal(explainSyncError(new Error('That invite code is invalid.'),'fallback'),'That invite code is invalid.');
+});
 
 test('sync server URLs normalize origins and require HTTPS outside localhost',()=>{
   assert.equal(normalizeSyncUrl('https://sync.example.test/'),'https://sync.example.test');

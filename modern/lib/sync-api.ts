@@ -4,6 +4,12 @@ export type SyncUser={id:number};
 export type SyncAccount={username:string|null};
 export type RemoteWorkspace={revision:number;updatedAt:string;data:Workspace};
 
+export function explainSyncError(error:unknown,fallback:string){
+ if((error as {detail?:{error?:string}})?.detail?.error==='registration_disabled')
+  return 'Account creation is disabled on this server. The server owner must set HOLOCRON_REGISTRATION_CODE to a private invite code and restart or redeploy the server.';
+ return error instanceof Error?error.message:fallback;
+}
+
 export function normalizeSyncUrl(value:string){
  const url=new URL(value.trim());
  if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash||url.pathname!=='/')throw Error('Enter a valid sync server origin without a path, query, or credentials.');
