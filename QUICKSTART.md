@@ -19,6 +19,29 @@ The app and bundled catalog work offline. Changes are saved in the browser
 profile; use **Options → Backup workspace** to keep an independent JSON
 backup.
 
+The Windows package includes Node.js and can be started from
+`Start-Holocron.cmd`; keep the launcher window open while using the app. The
+macOS/Linux launcher is `start-holocron.sh`.
+
+The local server accepts only the loopback hosts `127.0.0.1:41731` and
+`localhost:41731` by default.
+
+## Run the sync API separately
+
+For a separate local sync service, build the app and run:
+
+```powershell
+npm run start:sync
+```
+
+The sync API listens on `127.0.0.1:41732` by default. Change the listener with
+`HOLOCRON_SYNC_HOST` and `HOLOCRON_SYNC_PORT`. Its SQLite database defaults to
+`./holocron-sync.sqlite`; set `HOLOCRON_SYNC_DATABASE` to choose another path.
+
+The separate sync mode is intended for development or a trusted local network.
+Use `HOLOCRON_ALLOWED_ORIGINS` to add browser origins and
+`HOLOCRON_ALLOWED_HOSTS` to add loopback host values where needed.
+
 ## Deploy on Railway
 
 1. In Railway, create a project from this GitHub repository and connect the
