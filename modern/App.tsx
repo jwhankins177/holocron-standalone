@@ -37,6 +37,15 @@ import {Card,Catalog,Deck,Owned,Workspace,emptyWorkspace,parseCollection,mergeCo
 const colors:Record<string,string>={Vigilance:'#497db8',Command:'#44876c',Aggression:'#c95d51',Cunning:'#c29a39',Heroism:'#d9d7c9',Villainy:'#454a4c'};
 const aspects=Object.keys(colors);
 const siteVersion=`v${APP_VERSION} · standalone`;
+type SyncStatusRecord={lastSyncedAt:string;localRevision:number;remoteRevision:number};
+function readSyncStatus(base:string,userId:number):SyncStatusRecord|null{
+ if(!userId)return null;
+ try{
+  const value=JSON.parse(localStorage.getItem(`holocron-sync-status:${normalizeSyncUrl(base)}:${userId}`)||'null');
+  if(!value||typeof value.lastSyncedAt!=='string'||!Number.isSafeInteger(value.localRevision)||!Number.isSafeInteger(value.remoteRevision)||!Number.isFinite(Date.parse(value.lastSyncedAt)))return null;
+  return value;
+ }catch{return null}
+}
 function defaultSyncServer(){
  return ['localhost','127.0.0.1','[::1]'].includes(location.hostname)||location.hostname.endsWith('.ts.net')?'':location.origin;
 }
@@ -67,6 +76,7 @@ export default function Home(){
  const [syncCodeExpiresAt,setSyncCodeExpiresAt]=useState('');
  const [syncToken,setSyncToken]=useState(()=>{try{if(localStorage.getItem('holocron-sync-email')){localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');return ''}return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?localStorage.getItem('holocron-sync-token')||'':''}catch{return ''}});
  const [syncUserId,setSyncUserId]=useState(()=>{try{return localStorage.getItem('holocron-sync-auth-url')===localStorage.getItem('holocron-sync-url')?Number(localStorage.getItem('holocron-sync-user-id'))||0:0}catch{return 0}});
+ const [syncStatus,setSyncStatus]=useState<SyncStatusRecord|null>(()=>readSyncStatus(syncUrl,syncUserId));
  const [syncBusy,setSyncBusy]=useState(false);
  const [syncMessage,setSyncMessage]=useState('');
  const [remoteConflict,setRemoteConflict]=useState<{revision:number;updatedAt:string;data:Workspace}|null>(null);
@@ -354,7 +364,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   setSyncUrl(base);
   if(previous&&previous!==base){
    localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-   setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setRemoteConflict(null);
+   setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(null);setRemoteConflict(null);
   }
   return base;
  }
@@ -372,13 +382,13 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     const result=await registerAccount(base);
     localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
     localStorage.removeItem('holocron-sync-email');
-    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(null);
     setSyncMessage('Collection created. Generate a pairing code here when you are ready to connect another device.');
    }else{
     const result=await loginAccount(base,syncCode);
     localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
     localStorage.removeItem('holocron-sync-email');
-    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(readSyncStatus(base,result.user.id));
     setSyncMessage(result.legacyCodeUsed?'Connected using your previous private code. It can only be used once; generate a pairing code for other devices.':'Connected to your collection.');
    }
   }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to connect to the sync server.')}
@@ -418,7 +428,13 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   finally{setSyncBusy(false)}
  }
  function syncCursorKey(){return 'holocron-sync-revision:'+normalizeSyncUrl(syncUrl)+':'+syncUserId}
- function rememberSyncRevision(value:number){localStorage.setItem(syncCursorKey(),String(value))}
+ function syncStatusKey(){return 'holocron-sync-status:'+normalizeSyncUrl(syncUrl)+':'+syncUserId}
+ function rememberWorkspaceSynced(remoteRevision:number,localRevision:number,lastSyncedAt=new Date().toISOString()){
+  const record={lastSyncedAt,localRevision,remoteRevision};
+  localStorage.setItem(syncCursorKey(),String(remoteRevision));
+  localStorage.setItem(syncStatusKey(),JSON.stringify(record));
+  setSyncStatus(record);
+ }
  function showRemoteConflict(remote:{revision:number;updatedAt:string;data:Workspace}){setRemoteConflict(remote);setSyncMessage('The cloud workspace differs from this device. Choose which copy to keep.')}
  async function syncWorkspace(){
   setSyncBusy(true);setSyncMessage('Checking cloud workspace…');
@@ -431,16 +447,21 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    catch(error){
     if((error as Error&{status?:number}).status!==404)throw error;
     const saved=await putRemoteWorkspace(base,syncToken,0,current.current);
-    rememberSyncRevision(saved.revision);setRemoteConflict(null);setSyncMessage('This device’s workspace is now backed up to your sync server.');return;
+    rememberWorkspaceSynced(saved.revision,revision.current);setRemoteConflict(null);setSyncMessage('This device’s workspace is now backed up to your sync server.');return;
    }
    const savedRevision=Number(localStorage.getItem(syncCursorKey()));
    const cursorExists=localStorage.getItem(syncCursorKey())!==null&&Number.isSafeInteger(savedRevision);
-   if(!cursorExists||savedRevision!==remote.revision){showRemoteConflict(remote);return}
+   if(!cursorExists||savedRevision!==remote.revision){showRemoteConflict(remote);setSyncOpen(true);return}
    const saved=await putRemoteWorkspace(base,syncToken,remote.revision,current.current);
-   rememberSyncRevision(saved.revision);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
+   rememberWorkspaceSynced(saved.revision,revision.current);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
   }catch(error){
    setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a pairing code.':error instanceof Error?error.message:'Unable to sync this workspace.');
   }finally{setSyncBusy(false)}
+ }
+ function openHeaderSync(){
+  setSyncMessage('');
+  setSyncOpen(true);
+  if(syncToken)void syncWorkspace();
  }
  async function resolveWorkspaceConflict(choice:'cloud'|'device'){
   if(!remoteConflict)return;
@@ -456,10 +477,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     historyRef.current=[point,...historyRef.current].slice(0,8);setHistoryItems(historyRef.current);
     try{writeHistory(localStorage,workspaceKey,record.revision,historyRef.current)}catch{}
     current.current=record.data;revision.current=record.revision;setWorkspace(record.data);setStatus('Saved on this device');setError('');
-    rememberSyncRevision(remoteConflict.revision);setSyncMessage('Cloud workspace restored to this device.');
+    rememberWorkspaceSynced(remoteConflict.revision,record.revision);setSyncMessage('Cloud workspace restored to this device.');
    }else{
     const saved=await putRemoteWorkspace(base,syncToken,remoteConflict.revision,current.current);
-    rememberSyncRevision(saved.revision);setSyncMessage('This device’s workspace replaced the cloud copy.');
+    rememberWorkspaceSynced(saved.revision,revision.current);setSyncMessage('This device’s workspace replaced the cloud copy.');
    }
    setRemoteConflict(null);
   }catch(error){
@@ -557,6 +578,10 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  }
  function openDeckSection(value:string){setDeckView(value);resetFilters();if(value==='build')setView('grid')}
  function metricJump(target:'all'|'unique'|'foil'|'catalog'|'sets'|'prints'){resetFilters();if(target==='foil')setFinish('foil');if(target==='unique')setView('table');if(target==='prints')setAllPrintings(true);requestAnimationFrame(()=>{document.getElementById('card-results')?.scrollIntoView({block:'start'});if(target==='sets'){const panel=document.querySelector('.filter-panel') as HTMLDetailsElement|null;if(panel)panel.open=true;(document.querySelector('select[aria-label="Set"]') as HTMLSelectElement|null)?.focus()}})}
+ const hasLocalSyncChanges=syncStatus!==null&&(revision.current!==syncStatus.localRevision||!!pending.current||saving.current);
+ const headerSyncState=!syncToken?'disconnected':!loaded?'checking':remoteConflict?'conflict':!syncStatus?'never':hasLocalSyncChanges?'pending':'synced';
+ const headerSyncLabel=headerSyncState==='disconnected'?'Not connected':headerSyncState==='checking'?'Checking…':headerSyncState==='conflict'?'Needs attention':headerSyncState==='never'?'Not synced yet':headerSyncState==='pending'?'Changes not synced':'In sync';
+ const lastSyncedLabel=syncStatus?new Date(syncStatus.lastSyncedAt).toLocaleString():'Never';
  return <HighlightProvider value={{settings:cardHighlights,context:{premierIds,ownedByCore:owned,deckCores}}}><div className="shell"><header className="workspace-header">
   <div className="workspace-navigation"><button className="brand" aria-label="Holocron Standalone home" onClick={()=>nav('catalog')}><img className="brand-icon standalone-icon" src="./standalone-icon-192.png" alt="" width={44} height={44}/><span>HOLOCRON<small>STANDALONE</small><small className="site-version">v{APP_VERSION}</small></span></button><nav aria-label="Workspace">
    <button className={tab==='collection'?'selected':''} aria-current={tab==='collection'?'page':undefined} onClick={()=>nav('collection')}><Library size={19}/>My collection<span>{count(workspace.collection).toLocaleString()}</span></button>
@@ -575,6 +600,12 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
     <div className="options-status"><HardDrive size={15}/><span>{status}</span>{status==='Unsaved changes'&&<button onClick={()=>void flush()}>Retry</button>}</div><div className="options-version">Holocron {siteVersion}</div>
    </div></details>
   </nav></div>
+  <div className="workspace-tools">
+   <button className="primary header-sync-button" aria-label="Sync workspace" disabled={syncBusy||!!syncToken&&(!loaded||!!pending.current||saving.current)} onClick={openHeaderSync}><RotateCw size={16}/>{syncBusy?'Working…':'Sync'}</button>
+   <div className="workspace-sync-status" data-state={headerSyncState} title="In-sync status reflects the last successful sync. Press Sync to check for changes from another device.">
+    <strong className="workspace-sync-state">{headerSyncLabel}</strong><span>Last synced: {lastSyncedLabel}</span>
+   </div>
+  </div>
  </header>
  <div className="workspace-body">
  <main>
