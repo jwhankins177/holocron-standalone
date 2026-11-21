@@ -30,7 +30,7 @@ import type {CardFilters,QuickFilter,SortRule} from './lib/card-display';
 import {nativeCall} from './lib/browser-actions';
 import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
-import {createPairingCode,getRemoteCatalog,getRemoteWorkspace,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,validateCatalog} from './lib/sync-api';
+import {getRemoteCatalog,getRemoteWorkspace,getSyncAccount,loginAccount,logoutAccount,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,setSyncAccountCredentials,validateCatalog} from './lib/sync-api';
 import type {RemoteWorkspace} from './lib/sync-api';
 import {readSyncSession} from './lib/sync-session';
 import {Fragment,useEffect,useMemo,useRef,useState} from 'react';
@@ -51,6 +51,12 @@ function readStoredSyncSession(){
   }
   return readSyncSession(localStorage,normalizeSyncUrl);
  }catch{return null}
+}
+function readStoredSyncUsername(){
+ try{return localStorage.getItem('holocron-sync-username')||''}catch{return ''}
+}
+function storeSyncUsername(username:string){
+ try{localStorage.setItem('holocron-sync-username',username)}catch{}
 }
 type SyncStatusRecord={lastSyncedAt:string;localRevision:number;remoteRevision:number};
 function readSyncStatus(base:string,userId:number):SyncStatusRecord|null{
@@ -88,8 +94,12 @@ export default function Home(){
  const [starterInitialId,setStarterInitialId]=useState('');
  const [syncOpen,setSyncOpen]=useState(false);
  const [syncUrl,setSyncUrl]=useState(()=>{try{return localStorage.getItem('holocron-sync-url')||defaultSyncServer()}catch{return defaultSyncServer()}});
- const [syncCode,setSyncCode]=useState('');
- const [syncCodeExpiresAt,setSyncCodeExpiresAt]=useState('');
+ const [syncUsername,setSyncUsername]=useState(readStoredSyncUsername);
+ const [syncPassword,setSyncPassword]=useState('');
+ const [syncPasswordConfirm,setSyncPasswordConfirm]=useState('');
+ const [syncAuthMode,setSyncAuthMode]=useState<'login'|'register'>('login');
+ const [syncAccountUsername,setSyncAccountUsername]=useState<string|null>(null);
+ const [syncAccountLoaded,setSyncAccountLoaded]=useState(false);
  const [syncToken,setSyncToken]=useState(()=>readStoredSyncSession()?.token||'');
  const [syncUserId,setSyncUserId]=useState(()=>readStoredSyncSession()?.userId||0);
  const [syncStatus,setSyncStatus]=useState<SyncStatusRecord|null>(()=>readSyncStatus(syncUrl,syncUserId));
@@ -97,6 +107,23 @@ export default function Home(){
  const [syncMessage,setSyncMessage]=useState('');
  const [remoteConflict,setRemoteConflict]=useState<{revision:number;updatedAt:string;data:Workspace}|null>(null);
  useEffect(()=>{const storage=navigator.storage;if(storage?.persist)void storage.persist().catch(()=>false)},[]);
+ useEffect(()=>{
+  if(!syncOpen||!syncToken){setSyncAccountLoaded(false);return}
+  let active=true;
+  setSyncAccountLoaded(false);
+  void getSyncAccount(normalizeSyncUrl(syncUrl),syncToken).then(account=>{
+   if(active){
+    setSyncAccountUsername(account.username);setSyncAccountLoaded(true);
+    if(account.username){setSyncUsername(account.username);storeSyncUsername(account.username)}
+   }
+  }).catch(error=>{
+   if(!active)return;
+   setSyncAccountLoaded(true);
+   if(discardExpiredSyncSession(error))setSyncMessage('This sign-in expired. Sign in again with your username and password.');
+   else setSyncMessage(error instanceof Error?error.message:'Unable to check this account.');
+  });
+  return()=>{active=false};
+ },[syncOpen,syncToken,syncUrl]);
  useEffect(()=>{if(!loaded||!catalog)return;const earned=collectionAchievements(workspace,catalog).filter(a=>a.earned&&!workspace.achievementUnlocks?.[a.id]);if(earned.length)update({...current.current,achievementUnlocks:{...current.current.achievementUnlocks,...Object.fromEntries(earned.map(a=>[a.id,new Date().toISOString()]))}},false,false)},[loaded,catalog,workspace.collection,workspace.resolutions,workspace.decks,workspace.achievementUnlocks]);
  function importStarter(starter:StarterDeck){try{const result=addStarterDeck(current.current,starter);if(!result.existing&&!update(result.workspace))return 'The deck could not be saved. Please resolve the workspace save error and try again.';setStarterPickerOpen(false);setFolderFilter('');setSection('deck');nav('deck');setDeckId(result.deck.uid);setDeckView('cards');setView('grid');resetFilters();setNotice(result.existing?'Opened your existing deck.':'Starter added to My decks. Collection quantities are unchanged.');return undefined}catch(error){return error instanceof Error?error.message:'Unable to import starter deck'}}
  const [collectionCard,setCollectionCard]=useState<Card|null>(null);
@@ -384,7 +411,8 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   setSyncUrl(base);
   if(previous&&previousBase!==base){
    localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-   setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(null);setRemoteConflict(null);
+   localStorage.removeItem('holocron-sync-username');setSyncUsername('');
+   setSyncToken('');setSyncUserId(0);setSyncAccountUsername(null);setSyncAccountLoaded(false);setSyncStatus(null);setRemoteConflict(null);
   }
   return base;
  }
@@ -394,46 +422,52 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  function discardExpiredSyncSession(error:unknown){
   if((error as Error&{status?:number}).status!==401)return false;
   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-  setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setRemoteConflict(null);
+  setSyncToken('');setSyncUserId(0);setSyncAccountUsername(null);setSyncAccountLoaded(false);setRemoteConflict(null);
   return true;
  }
  async function syncAccount(action:'login'|'register'){
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
+   if(syncPassword!==syncPasswordConfirm&&action==='register')throw Error('The passwords do not match.');
    if(action==='register'){
-    const result=await registerAccount(base);
+    const result=await registerAccount(base,syncUsername,syncPassword);
     localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
+    storeSyncUsername(syncUsername.trim().toLowerCase());
     localStorage.removeItem('holocron-sync-email');
-    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(null);
-    setSyncMessage('Collection created. Generate a pairing code here when you are ready to connect another device.');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncAccountUsername(syncUsername.trim().toLowerCase());setSyncAccountLoaded(true);setSyncStatus(null);
+    setSyncPassword('');setSyncPasswordConfirm('');
+    setSyncMessage('Account created. Use the same username and password on your other devices.');
    }else{
-    const result=await loginAccount(base,syncCode);
+    const result=await loginAccount(base,syncUsername,syncPassword);
     localStorage.setItem('holocron-sync-token',result.token);localStorage.setItem('holocron-sync-user-id',String(result.user.id));localStorage.setItem('holocron-sync-auth-url',base);
+    storeSyncUsername(syncUsername.trim().toLowerCase());
     localStorage.removeItem('holocron-sync-email');
-    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncCode('');setSyncCodeExpiresAt('');setSyncStatus(readSyncStatus(base,result.user.id));
-    setSyncMessage(result.legacyCodeUsed?'Connected using your previous private code. It can only be used once; generate a pairing code for other devices.':'Connected to your collection.');
+    setSyncToken(result.token);setSyncUserId(result.user.id);setSyncAccountUsername(syncUsername.trim().toLowerCase());setSyncAccountLoaded(true);setSyncStatus(readSyncStatus(base,result.user.id));
+    setSyncPassword('');setSyncPasswordConfirm('');
+    setSyncMessage('Signed in to your collection.');
    }
   }catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to connect to the sync server.')}
   finally{setSyncBusy(false)}
  }
- async function generatePairingCode(){
+ async function addSyncAccountCredentials(){
   setSyncBusy(true);setSyncMessage('');
   try{
    const base=saveSyncEndpoint();
-   if(!syncToken||!syncAuthMatches(base))throw Error('Connect to your collection before generating a pairing code.');
-   const result=await createPairingCode(base,syncToken);
-   setSyncCode(result.code);
-   setSyncCodeExpiresAt(result.expiresAt);
-   setSyncMessage('Pairing code generated. It expires in 10 minutes and works once.');
-  }catch(error){setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a pairing code.':error instanceof Error?error.message:'Unable to generate a pairing code.')}
+   if(!syncToken||!syncAuthMatches(base))throw Error('Sign in to your collection before setting up a login.');
+   if(syncPassword!==syncPasswordConfirm)throw Error('The passwords do not match.');
+   const result=await setSyncAccountCredentials(base,syncToken,syncUsername,syncPassword);
+   storeSyncUsername(result.username||'');
+   setSyncAccountUsername(result.username);setSyncAccountLoaded(true);setSyncPassword('');setSyncPasswordConfirm('');
+   setSyncMessage('Login saved for this collection. Use it on your other devices.');
+  }catch(error){setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to save the login.')}
   finally{setSyncBusy(false)}
  }
  async function signOutSync(){
   setSyncBusy(true);setSyncMessage('');
   try{const base=saveSyncEndpoint();if(syncToken&&syncAuthMatches(base))await logoutAccount(base,syncToken)}catch(error){setSyncMessage(error instanceof Error?error.message:'The server sign-out could not be confirmed.')}
   localStorage.removeItem('holocron-sync-token');localStorage.removeItem('holocron-sync-email');localStorage.removeItem('holocron-sync-user-id');localStorage.removeItem('holocron-sync-auth-url');
-  setSyncToken('');setSyncUserId(0);setSyncCode('');setSyncCodeExpiresAt('');setRemoteConflict(null);
+  setSyncToken('');setSyncUserId(0);setSyncAccountUsername(null);setSyncAccountLoaded(false);setRemoteConflict(null);
   setSyncBusy(false);
  }
  async function refreshCardCatalog(){
@@ -478,7 +512,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    const saved=await putRemoteWorkspace(base,syncToken,remote.revision,current.current);
    rememberWorkspaceSynced(saved.revision,revision.current);setRemoteConflict(null);setSyncMessage('Workspace synced · '+new Date(saved.updatedAt).toLocaleString()+'.');
   }catch(error){
-   setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a pairing code.':error instanceof Error?error.message:'Unable to sync this workspace.');
+   setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to sync this workspace.');
   }finally{setSyncBusy(false)}
  }
  function openHeaderSync(){
@@ -511,7 +545,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
    if(status===409){
     try{showRemoteConflict(await getRemoteWorkspace(saveSyncEndpoint(),syncToken))}
     catch(refreshError){setSyncMessage(refreshError instanceof Error?refreshError.message:'The cloud workspace changed again. Retry sync.')}
-   }else setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Connect again with a pairing code.':error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
+   }else setSyncMessage(discardExpiredSyncSession(error)?'This sign-in expired. Sign in again with your username and password.':error instanceof Error?error.message:'Unable to resolve the workspace conflict.');
   }finally{setSyncBusy(false)}
  }
  function play(){if(!active)return;try{const url=forceTableDeckUrl(active);window.open(url,'_blank','noopener,noreferrer');setNotice('Deck sent to ForceTable. Select an opponent there; verify its imported count, especially for new sets.')}catch(e:any){setNotice(e.message)}}
@@ -766,22 +800,33 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  {syncOpen&&<Modal label="Sync and card updates" onDismiss={()=>setSyncOpen(false)}><section className="modal sync-dialog">
   <button className="close" aria-label="Close sync settings" onClick={()=>setSyncOpen(false)}><X/></button>
   <div className="eyebrow">YOUR DEVICES, IN STEP</div><h2>Sync & card updates</h2>
-  <p>Connect new devices with a one-time pairing code from a signed-in device. Updates to the public card catalog are available to anyone using this server.</p>
+  <p>Sign in on each device with the same username and password. Each app remembers its own sign-in. Updates to the public card catalog are available to anyone using this server.</p>
   <label>Sync server URL<input type="url" required placeholder="https://holocron.example.com" value={syncUrl} onChange={event=>setSyncUrl(event.target.value)} disabled={syncBusy||!!syncToken}/></label>
-  {!syncToken&&<><label>Pairing code or previous private code<input type="text" inputMode="numeric" autoComplete="off" maxLength={64} spellCheck={false} value={syncCode} onChange={event=>setSyncCode(event.target.value)} disabled={syncBusy}/></label><p className="muted">Previously issued long private codes can reconnect one last time.</p></>}
-  {syncToken?<><p>Connected to your collection. Syncing is manual; changes are not sent until you choose Sync workspace.</p>
-  {syncCode?<><p>One-time pairing code:<br/><code>{syncCode}</code></p><p className="muted">Use it once on another device before {new Date(syncCodeExpiresAt).toLocaleString()}. It expires after 10 minutes.</p></>:<p className="muted">Generate a one-time pairing code for each new device. It expires after 10 minutes.</p>}
+  {syncToken?<><p>Connected to your collection{syncAccountUsername?` as ${syncAccountUsername}`:''}. Syncing is manual; changes are not sent until you choose Sync workspace.</p>
+  {!syncAccountLoaded?<p className="muted">Checking your account…</p>:syncAccountUsername?<p className="muted">Use this username and password to sign in on your other devices. Your password is not stored in the app.</p>:<form onSubmit={event=>{event.preventDefault();void addSyncAccountCredentials()}}>
+   <p>Set a username and password for this collection. Your existing collection stays connected.</p>
+   <label>Username<input required value={syncUsername} maxLength={32} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={event=>setSyncUsername(event.target.value)} disabled={syncBusy}/></label>
+   <label>Password<input required type="password" value={syncPassword} minLength={8} maxLength={128} autoComplete="new-password" onChange={event=>setSyncPassword(event.target.value)} disabled={syncBusy}/></label>
+   <label>Confirm password<input required type="password" value={syncPasswordConfirm} maxLength={128} autoComplete="new-password" onChange={event=>setSyncPasswordConfirm(event.target.value)} disabled={syncBusy}/></label>
+   <p className="muted">Username: 3–32 letters, numbers, periods, underscores, or hyphens. Password: 8–128 characters. Keep it in a password manager; there is no email-based recovery.</p>
+   <button type="submit" className="primary full" disabled={syncBusy||!syncUsername.trim()||syncPassword.length<8||syncPassword!==syncPasswordConfirm}>Save login for this collection</button>
+  </form>}
   <div className="actions">
-   {syncCode&&<button disabled={syncBusy} onClick={async()=>{try{await nativeCall('copy',{text:syncCode});setSyncMessage('Pairing code copied.')}catch(error){setSyncMessage(error instanceof Error?error.message:'Unable to copy the pairing code.')}}}><Copy size={15}/>Copy code</button>}
-   <button disabled={syncBusy} onClick={()=>{if(confirm('Create a pairing code? Any unused code from this device will stop working.'))void generatePairingCode()}}>Generate pairing code</button>
    <button className="primary" disabled={syncBusy||!loaded||!!pending.current||saving.current} onClick={()=>void syncWorkspace()}><RotateCw size={15}/>{syncBusy?'Working…':'Sync workspace'}</button>
    <button disabled={syncBusy} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
    <button disabled={syncBusy} onClick={()=>void signOutSync()}>Sign out</button>
-  </div></>:<div className="actions">
-   <button className="primary" disabled={syncBusy||!syncCode.trim()} onClick={()=>void syncAccount('login')}>Connect with code</button>
-   <button disabled={syncBusy} onClick={()=>void syncAccount('register')}>Create collection</button>
-   <button disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
-  </div>}
+  </div></>:<>
+   <form onSubmit={event=>{event.preventDefault();void syncAccount(syncAuthMode)}}>
+    <label>Username<input required value={syncUsername} maxLength={32} autoComplete="username" autoCapitalize="none" autoCorrect="off" spellCheck={false} onChange={event=>setSyncUsername(event.target.value)} disabled={syncBusy}/></label>
+    <label>Password<input required type="password" value={syncPassword} maxLength={128} autoComplete={syncAuthMode==='register'?'new-password':'current-password'} onChange={event=>setSyncPassword(event.target.value)} disabled={syncBusy}/></label>
+    {syncAuthMode==='register'&&<><label>Confirm password<input required type="password" value={syncPasswordConfirm} maxLength={128} autoComplete="new-password" onChange={event=>setSyncPasswordConfirm(event.target.value)} disabled={syncBusy}/></label><p className="muted">Username: 3–32 letters, numbers, periods, underscores, or hyphens. Password: 8–128 characters. Keep it in a password manager; there is no email-based recovery.</p></>}
+    <div className="actions">
+     <button type="submit" className="primary" disabled={syncBusy||!syncUsername.trim()||!syncPassword||syncAuthMode==='register'&&(syncPassword.length<8||syncPassword!==syncPasswordConfirm)}>{syncAuthMode==='login'?'Sign in':'Create account'}</button>
+     <button type="button" disabled={syncBusy} onClick={()=>{setSyncAuthMode(syncAuthMode==='login'?'register':'login');setSyncPasswordConfirm('');setSyncMessage('')}}>{syncAuthMode==='login'?'Create a new account':'I already have an account'}</button>
+    </div>
+   </form>
+   <button type="button" disabled={syncBusy||!syncUrl.trim()} onClick={()=>void refreshCardCatalog()}>Get latest card info</button>
+  </>}
   {remoteConflict&&<div className="sync-conflict" role="alert">
    <strong>These workspaces differ.</strong><p>Cloud revision {remoteConflict.revision}, saved {new Date(remoteConflict.updatedAt).toLocaleString()}. Choose one copy; the other will be replaced. Back up this device first if needed.</p>
    <div className="actions">

@@ -60,12 +60,18 @@ service settings rather than Config as Code.
 1. Open the Railway HTTPS URL on the device.
 2. Choose **Options → Sync & card updates**.
 3. Enter the same HTTPS URL as the sync server URL.
-4. On the first device, choose **Create collection**.
-5. While signed in, choose **Generate pairing code**.
-6. On each new device, enter the 8-digit code and choose **Connect with code**.
-   Pairing codes expire after 10 minutes and can be used once; generate one for
-   each device.
-7. Choose **Sync workspace** to send this device's workspace.
+4. On the first device, choose **Create a new account**, then set a username
+   and password.
+5. On each other device, enter the same username and password and choose
+   **Sign in**.
+6. Choose **Sync workspace** to send this device's workspace.
+
+If a device is already signed in to your collection, set its username and
+password in **Sync & card updates** first. This keeps the existing collection
+and lets every other device sign in to it. The app remembers each device's
+sign-in for 30 days; if its browser data is cleared or the sign-in expires,
+sign in again with your username and password. Passwords are not stored in the
+app. Save yours in a password manager; there is no email-based password reset.
 
 Sync is manual; changes are not sent until you choose **Sync workspace**.
 When the device and cloud copies differ, choose which copy to keep. Export a
@@ -77,17 +83,16 @@ workspace backup before resolving a conflict.
   volume stores the sync database, but is not a substitute for backups.
 - Configure manual or scheduled Railway volume backups in the service's
   **Backups** tab. See [Railway volume backups](https://docs.railway.com/volumes/backups).
-- Pairing codes are short-lived and single-use. A signed-in device can generate
-  another code whenever you need to connect a new device. Devices keep their
-  own 30-day sign-in session and do not need the pairing code again to sync.
 - Keep using the same app URL and browser profile. Clearing browser site data
   removes the local workspace and device sign-in; use **Options → Refresh site**
   to apply app updates without clearing them.
-- Previously issued long private codes can be used once to reconnect; after
-  that, generate one-time pairing codes for additional devices.
-- Existing email/password accounts are not migrated to pairing-code sign-in.
-  Their remote workspaces remain stored but cannot be accessed with the new
-  sign-in method.
+- Existing signed-in collections can add a username and password without
+  replacing their cloud workspace.
+- Previously issued pairing codes and private codes remain accepted by the
+  sync API for older app versions.
+- Legacy email/password accounts from versions before pairing-code sign-in are
+  not migrated to this login; their stored cloud workspaces remain on the
+  server but are not accessible through the current app.
 - Railway deploys code updates when changes reach its connected branch. The
   bundled rules remain snapshots; **Get latest card info** fetches current card
   data from SWU-DB and caches it on this device.

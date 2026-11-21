@@ -1,6 +1,7 @@
 import type {Catalog,Workspace} from './model.ts';
 
 export type SyncUser={id:number};
+export type SyncAccount={username:string|null};
 export type RemoteWorkspace={revision:number;updatedAt:string;data:Workspace};
 
 export function normalizeSyncUrl(value:string){
@@ -26,14 +27,17 @@ async function request<T>(base:string,path:string,token?:string,options:RequestI
  return response.json() as Promise<T>;
 }
 
-export function registerAccount(base:string){
- return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST'});
+export function registerAccount(base:string,username:string,password:string){
+ return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST',body:JSON.stringify({username,password})});
 }
-export function loginAccount(base:string,code:string){
- return request<{token:string;user:SyncUser;legacyCodeUsed?:boolean}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({code})});
+export function loginAccount(base:string,username:string,password:string){
+ return request<{token:string;user:SyncUser}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({username,password})});
 }
-export function createPairingCode(base:string,token:string){
- return request<{code:string;expiresAt:string}>(base,'/api/auth/pairing-code',token,{method:'POST'});
+export function getSyncAccount(base:string,token:string){
+ return request<SyncAccount>(base,'/api/auth/account',token);
+}
+export function setSyncAccountCredentials(base:string,token:string,username:string,password:string){
+ return request<SyncAccount>(base,'/api/auth/credentials',token,{method:'POST',body:JSON.stringify({username,password})});
 }
 export function logoutAccount(base:string,token:string){
  return request<{ok:boolean}>(base,'/api/auth/logout',token,{method:'POST'});
