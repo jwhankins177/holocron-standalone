@@ -1,4 +1,4 @@
-import {createHash, randomBytes} from 'node:crypto';
+import {createHash, randomBytes, randomInt} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 
 const defaultCatalog = fileURLToPath(new URL('./public/catalog.json', import.meta.url));
 const tokenLifetime = 30 * 24 * 60 * 60 * 1000;
+const pairingCodeLifetime = 10 * 60 * 1000;
 const bodyLimit = 5 * 1024 * 1024;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const json = (response, status, value, headers={}) => {
@@ -28,11 +29,17 @@ function nullableNumber(value) {
   return Number.isFinite(number)?number:null;
 }
 
-function makeAccessCode() {
-  return randomBytes(16).toString('hex').toUpperCase().match(/.{4}/g).join('-');
+function makePairingCode() {
+  return String(randomInt(0,100_000_000)).padStart(8,'0');
 }
 
-function normalizeAccessCode(value) {
+function normalizePairingCode(value) {
+  if (typeof value!=='string'||value.length>16) return null;
+  const code=value.replace(/[\s-]/g,'');
+  return /^\d{8}$/.test(code)?code:null;
+}
+
+function normalizeLegacyAccessCode(value) {
   if (typeof value!=='string'||value.length>64) return null;
   const code=value.toUpperCase().replace(/[\s-]/g,'');
   return /^[A-F0-9]{32}$/.test(code)?code:null;
@@ -132,6 +139,12 @@ export function createSyncServer({
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS pairing_codes (
+      code_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS pairing_codes_expiry ON pairing_codes(expires_at);
     CREATE TABLE IF NOT EXISTS workspaces (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       revision INTEGER NOT NULL,
@@ -165,9 +178,9 @@ export function createSyncServer({
       : '';
     return forwarded||request.socket.remoteAddress||'unknown';
   };
-  const limited = (key, now=Date.now()) => {
+  const limited = (key, now=Date.now(),max=10) => {
     const recent = (rateLimits.get(key)||[]).filter(at=>now-at<10*60*1000);
-    if (recent.length >= 10) return false;
+    if (recent.length >= max) return false;
     recent.push(now);
     rateLimits.set(key,recent);
     if (rateLimits.size > 2000) {
@@ -225,26 +238,47 @@ export function createSyncServer({
       }
       if (pathname==='/api/auth/register' && request.method==='POST') {
         if (!limited('register:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
-        if (request.headers['content-type']) return json(response,400,{error:'code_only_auth',message:'Create a collection code without email or password credentials.'},cors);
-        const code=makeAccessCode(),result=database.prepare('INSERT INTO users(access_code_hash) VALUES(?)').run(digest(code.replace(/-/g,'')));
+        if (request.headers['content-type']) return json(response,400,{error:'code_only_auth',message:'Create a collection without email or password credentials.'},cors);
+        const result=database.prepare('INSERT INTO users(access_code_hash) VALUES(NULL)').run();
         const user={id:Number(result.lastInsertRowid)};
-        return json(response,201,{token:createSession(user.id),code,user},cors);
+        return json(response,201,{token:createSession(user.id),user},cors);
       }
       if (pathname==='/api/auth/login' && request.method==='POST') {
         if (!limited('login:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
+        if (!limited('pair-login-global',Date.now(),1000)) return json(response,429,{error:'rate_limited',message:'Too many pairing attempts. Try again later.'},cors);
         const body=await readBody(request);
-        const code=normalizeAccessCode(body.code);
-        if (!code) return json(response,401,{error:'invalid_credentials',message:'Enter a valid collection code.'},cors);
-        const user=database.prepare('SELECT id FROM users WHERE access_code_hash=?').get(digest(code));
-        if (!user) return json(response,401,{error:'invalid_credentials',message:'That collection code was not recognized.'},cors);
-        return json(response,200,{token:createSession(user.id),user:{id:user.id}},cors);
+        const code=normalizePairingCode(body.code);
+        if (code) {
+          const codeHash=digest(code),now=Date.now();
+          database.prepare('DELETE FROM pairing_codes WHERE expires_at<=?').run(now);
+          const pairing=database.prepare('DELETE FROM pairing_codes WHERE code_hash=? AND expires_at>? RETURNING user_id').get(codeHash,now);
+          if (pairing) {
+            return json(response,200,{token:createSession(pairing.user_id),user:{id:pairing.user_id}},cors);
+          }
+        }
+        const legacyCode=normalizeLegacyAccessCode(body.code);
+        if (legacyCode) {
+          const user=database.prepare('UPDATE users SET access_code_hash=NULL WHERE access_code_hash=? RETURNING id').get(digest(legacyCode));
+          if (user) {
+            return json(response,200,{token:createSession(user.id),user:{id:user.id},legacyCodeUsed:true},cors);
+          }
+        }
+        return json(response,401,{error:'invalid_credentials',message:'That pairing code is invalid or expired.'},cors);
       }
       const user=authorize(request);
-      if (pathname==='/api/auth/code' && request.method==='POST') {
+      if (pathname==='/api/auth/pairing-code' && request.method==='POST') {
         if (!user) return json(response,401,{error:'unauthorized'},cors);
-        const code=makeAccessCode();
-        database.prepare('UPDATE users SET access_code_hash=? WHERE id=?').run(digest(code.replace(/-/g,'')),user.id);
-        return json(response,200,{code},cors);
+        if (!limited('pair-code:'+user.id,Date.now(),5)) return json(response,429,{error:'rate_limited',message:'Too many pairing codes generated. Try again later.'},cors);
+        const now=Date.now(),expiresAt=now+pairingCodeLifetime;
+        database.prepare('DELETE FROM pairing_codes WHERE expires_at<=? OR user_id=?').run(now,user.id);
+        const insert=database.prepare('INSERT INTO pairing_codes(code_hash,user_id,expires_at) VALUES(?,?,?) ON CONFLICT(code_hash) DO NOTHING');
+        let code='',stored=false;
+        for(let attempt=0;attempt<3&&!stored;attempt++){
+          code=makePairingCode();
+          stored=insert.run(digest(code),user.id,expiresAt).changes===1;
+        }
+        if(!stored)throw Error('Could not create a pairing code. Try again.');
+        return json(response,200,{code,expiresAt:new Date(expiresAt).toISOString()},cors);
       }
       if (pathname.startsWith('/api/workspace') && !user) return json(response,401,{error:'unauthorized'},cors);
       if (pathname==='/api/auth/logout' && request.method==='POST') {

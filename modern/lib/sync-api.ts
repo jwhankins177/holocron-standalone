@@ -27,13 +27,13 @@ async function request<T>(base:string,path:string,token?:string,options:RequestI
 }
 
 export function registerAccount(base:string){
- return request<{token:string;code:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST'});
+ return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST'});
 }
 export function loginAccount(base:string,code:string){
- return request<{token:string;user:SyncUser}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({code})});
+ return request<{token:string;user:SyncUser;legacyCodeUsed?:boolean}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({code})});
 }
-export function rotateAccountCode(base:string,token:string){
- return request<{code:string}>(base,'/api/auth/code',token,{method:'POST'});
+export function createPairingCode(base:string,token:string){
+ return request<{code:string;expiresAt:string}>(base,'/api/auth/pairing-code',token,{method:'POST'});
 }
 export function logoutAccount(base:string,token:string){
  return request<{ok:boolean}>(base,'/api/auth/logout',token,{method:'POST'});

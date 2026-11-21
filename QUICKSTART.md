@@ -60,10 +60,12 @@ service settings rather than Config as Code.
 1. Open the Railway HTTPS URL on the device.
 2. Choose **Options → Sync & card updates**.
 3. Enter the same HTTPS URL as the sync server URL.
-4. On the first device, choose **Create collection code** and save the code
-   somewhere secure.
-5. On each other device, enter that code and choose **Connect to collection**.
-6. Choose **Sync workspace** to send this device's workspace.
+4. On the first device, choose **Create collection**.
+5. While signed in, choose **Generate pairing code**.
+6. On each new device, enter the 8-digit code and choose **Connect with code**.
+   Pairing codes expire after 10 minutes and can be used once; generate one for
+   each device.
+7. Choose **Sync workspace** to send this device's workspace.
 
 Sync is manual; changes are not sent until you choose **Sync workspace**.
 When the device and cloud copies differ, choose which copy to keep. Export a
@@ -75,10 +77,12 @@ workspace backup before resolving a conflict.
   volume stores the sync database, but is not a substitute for backups.
 - Configure manual or scheduled Railway volume backups in the service's
   **Backups** tab. See [Railway volume backups](https://docs.railway.com/volumes/backups).
-- A collection code is a reusable secret: anyone who has it can access the
-  collection. You can generate a replacement while signed in; losing the code
-  after signing out of every device means the collection cannot be accessed.
-- Existing email/password accounts are not migrated to collection codes.
+- Pairing codes are short-lived and single-use. A signed-in device can generate
+  another code whenever you need to connect a new device. Devices keep their
+  own 30-day sign-in session and do not need the pairing code again to sync.
+- Previously issued long private codes can be used once to reconnect; after
+  that, generate one-time pairing codes for additional devices.
+- Existing email/password accounts are not migrated to pairing-code sign-in.
   Their remote workspaces remain stored but cannot be accessed with the new
   sign-in method.
 - Railway deploys code updates when changes reach its connected branch. The
