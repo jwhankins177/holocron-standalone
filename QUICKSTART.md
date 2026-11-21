@@ -88,3 +88,5 @@ workspace backup before resolving a conflict.
 - Railway deploys code updates when changes reach its connected branch. The
   bundled rules remain snapshots; **Get latest card info** fetches current card
   data from SWU-DB and caches it on this device.
+- Choose **Options → Refresh site** to check for and apply the latest web app
+  build without clearing your sign-in or local collection.
