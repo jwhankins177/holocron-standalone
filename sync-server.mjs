@@ -1,7 +1,8 @@
-import {createHash, randomBytes, randomInt} from 'node:crypto';
+import {createHash, randomBytes, randomInt, scrypt as scryptCallback, timingSafeEqual} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
+import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
 
 const defaultCatalog = fileURLToPath(new URL('./public/catalog.json', import.meta.url));
@@ -9,6 +10,8 @@ const tokenLifetime = 30 * 24 * 60 * 60 * 1000;
 const pairingCodeLifetime = 10 * 60 * 1000;
 const bodyLimit = 5 * 1024 * 1024;
 const digest = value => createHash('sha256').update(value).digest('hex');
+const scrypt = promisify(scryptCallback);
+const dummyPasswordSalt = Buffer.alloc(16,0x53);
 const json = (response, status, value, headers={}) => {
   response.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...headers});
   response.end(JSON.stringify(value));
@@ -43,6 +46,21 @@ function normalizeLegacyAccessCode(value) {
   if (typeof value!=='string'||value.length>64) return null;
   const code=value.toUpperCase().replace(/[\s-]/g,'');
   return /^[A-F0-9]{32}$/.test(code)?code:null;
+}
+
+function normalizeUsername(value) {
+  if(typeof value!=='string'||value.length>64)return null;
+  const username=value.trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)?username:null;
+}
+
+function validPassword(value) {
+  return typeof value==='string'&&value.length>=8&&value.length<=128;
+}
+
+async function hashPassword(password,salt) {
+  const result=await scrypt(password,salt,32,{N:16384,r:8,p:1,maxmem:64*1024*1024});
+  return Buffer.from(result).toString('hex');
 }
 
 function updateCatalog(catalog,upstreamCards,upstreamSets,updated) {
@@ -171,6 +189,11 @@ export function createSyncServer({
       database.exec('PRAGMA foreign_keys = ON');
     }
   }
+  const migratedUserColumns=database.prepare('PRAGMA table_info(users)').all();
+  if(!migratedUserColumns.some(column=>column.name==='username'))database.exec('ALTER TABLE users ADD COLUMN username TEXT');
+  if(!migratedUserColumns.some(column=>column.name==='password_salt'))database.exec('ALTER TABLE users ADD COLUMN password_salt TEXT');
+  if(!migratedUserColumns.some(column=>column.name==='password_hash'))database.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+  database.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users(username COLLATE NOCASE) WHERE username IS NOT NULL');
   const rateLimits = new Map();
   const clientAddress = request => {
     const forwarded = process.env.HOLOCRON_TRUST_PROXY==='true'
@@ -238,8 +261,28 @@ export function createSyncServer({
       }
       if (pathname==='/api/auth/register' && request.method==='POST') {
         if (!limited('register:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
-        if (request.headers['content-type']) return json(response,400,{error:'code_only_auth',message:'Create a collection without email or password credentials.'},cors);
-        const result=database.prepare('INSERT INTO users(access_code_hash) VALUES(NULL)').run();
+        let body={};
+        if(request.headers['content-type']){
+          body=await readBody(request);
+          if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
+        }
+        const hasCredentials=body.username!==undefined||body.password!==undefined;
+        if(request.headers['content-type']&&!hasCredentials)return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
+        let username=null,passwordSalt=null,passwordHash=null;
+        if(hasCredentials){
+          username=normalizeUsername(body.username);
+          if(!username)return json(response,400,{error:'invalid_username',message:'Use 3–32 letters, numbers, periods, underscores, or hyphens; start with a letter or number.'},cors);
+          if(!validPassword(body.password))return json(response,400,{error:'invalid_password',message:'Use a password between 8 and 128 characters.'},cors);
+          passwordSalt=randomBytes(16).toString('hex');
+          passwordHash=await hashPassword(body.password,Buffer.from(passwordSalt,'hex'));
+        }
+        let result;
+        try{
+          result=database.prepare('INSERT INTO users(access_code_hash,username,password_salt,password_hash) VALUES(NULL,?,?,?)').run(username,passwordSalt,passwordHash);
+        }catch(error){
+          if(database.prepare('SELECT 1 FROM users WHERE username=? COLLATE NOCASE').get(username||''))return json(response,409,{error:'username_taken',message:'That username is already in use.'},cors);
+          throw error;
+        }
         const user={id:Number(result.lastInsertRowid)};
         return json(response,201,{token:createSession(user.id),user},cors);
       }
@@ -247,6 +290,7 @@ export function createSyncServer({
         if (!limited('login:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
         if (!limited('pair-login-global',Date.now(),1000)) return json(response,429,{error:'rate_limited',message:'Too many pairing attempts. Try again later.'},cors);
         const body=await readBody(request);
+        if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
         const code=normalizePairingCode(body.code);
         if (code) {
           const codeHash=digest(code),now=Date.now();
@@ -263,9 +307,43 @@ export function createSyncServer({
             return json(response,200,{token:createSession(user.id),user:{id:user.id},legacyCodeUsed:true},cors);
           }
         }
-        return json(response,401,{error:'invalid_credentials',message:'That pairing code is invalid or expired.'},cors);
+        const username=normalizeUsername(body.username);
+        const password=typeof body.password==='string'&&body.password.length<=128?body.password:'';
+        const account=username?database.prepare('SELECT id,password_salt,password_hash FROM users WHERE username=? COLLATE NOCASE').get(username):null;
+        const salt=account?.password_salt?Buffer.from(account.password_salt,'hex'):dummyPasswordSalt;
+        const passwordHash=await hashPassword(password,salt);
+        const storedHash=account?.password_hash;
+        const hashMatches=typeof storedHash==='string'&&/^[a-f0-9]{64}$/.test(storedHash)&&
+          timingSafeEqual(Buffer.from(passwordHash,'hex'),Buffer.from(storedHash,'hex'));
+        if(account&&hashMatches)return json(response,200,{token:createSession(account.id),user:{id:account.id}},cors);
+        return json(response,401,{error:'invalid_credentials',message:'Username or password is incorrect.'},cors);
       }
       const user=authorize(request);
+      if(pathname==='/api/auth/account'&&request.method==='GET'){
+        if(!user)return json(response,401,{error:'unauthorized'},cors);
+        const account=database.prepare('SELECT username FROM users WHERE id=?').get(user.id);
+        return json(response,200,{username:account?.username||null},cors);
+      }
+      if(pathname==='/api/auth/credentials'&&request.method==='POST'){
+        if(!user)return json(response,401,{error:'unauthorized'},cors);
+        const body=await readBody(request);
+        if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
+        const username=normalizeUsername(body.username);
+        if(!username)return json(response,400,{error:'invalid_username',message:'Use 3–32 letters, numbers, periods, underscores, or hyphens; start with a letter or number.'},cors);
+        if(!validPassword(body.password))return json(response,400,{error:'invalid_password',message:'Use a password between 8 and 128 characters.'},cors);
+        const account=database.prepare('SELECT username FROM users WHERE id=?').get(user.id);
+        if(account?.username)return json(response,409,{error:'credentials_already_set',message:'This collection already has a login.'},cors);
+        const passwordSalt=randomBytes(16).toString('hex');
+        const passwordHash=await hashPassword(body.password,Buffer.from(passwordSalt,'hex'));
+        try{
+          const result=database.prepare('UPDATE users SET username=?,password_salt=?,password_hash=? WHERE id=? AND username IS NULL').run(username,passwordSalt,passwordHash,user.id);
+          if(result.changes===1)return json(response,200,{username},cors);
+          return json(response,409,{error:'credentials_already_set',message:'This collection already has a login.'},cors);
+        }catch(error){
+          if(database.prepare('SELECT 1 FROM users WHERE username=? COLLATE NOCASE').get(username))return json(response,409,{error:'username_taken',message:'That username is already in use.'},cors);
+          throw error;
+        }
+      }
       if (pathname==='/api/auth/pairing-code' && request.method==='POST') {
         if (!user) return json(response,401,{error:'unauthorized'},cors);
         if (!limited('pair-code:'+user.id,Date.now(),5)) return json(response,429,{error:'rate_limited',message:'Too many pairing codes generated. Try again later.'},cors);

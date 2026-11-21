@@ -25,11 +25,23 @@ test('sync API creates a collection, pairs a device once, and protects workspace
   const database=new DatabaseSync(':memory:');
   const base=await startServer(t,{database});
   assert.equal((await post(base,'/api/auth/register',{email:'old@example.test',password:'legacy-password'})).status,400);
-  const account=await post(base,'/api/auth/register');
+  assert.equal((await post(base,'/api/auth/register',{username:'ab',password:'short'})).status,400);
+  const username='collection.owner';
+  const password='correct-horse-battery';
+  const account=await post(base,'/api/auth/register',{username,password});
   assert.equal(account.status,201);
   const {token,user,...accountData}=await account.json();
   assert.equal(user.id,1);
   assert.equal(Object.hasOwn(accountData,'code'),false);
+  assert.deepEqual({...database.prepare('SELECT username FROM users WHERE id=?').get(user.id)},{username});
+  assert.notEqual(database.prepare('SELECT password_hash FROM users WHERE id=?').get(user.id).password_hash,password);
+  const signedIn=await post(base,'/api/auth/login',{username:'Collection.Owner',password});
+  assert.equal(signedIn.status,200);
+  const signedInData=await signedIn.json();
+  assert.equal(signedInData.user.id,user.id);
+  assert.equal((await post(base,'/api/auth/login',{username,password:'wrong-password'})).status,401);
+  assert.equal((await post(base,'/api/auth/register',{username:'COLLECTION.OWNER',password})).status,409);
+  assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username});
   assert.equal((await fetch(base+'/api/workspace')).status,401);
   assert.equal((await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}})).status,404);
 
@@ -58,6 +70,51 @@ test('sync API creates a collection, pairs a device once, and protects workspace
   assert.equal((await conflicting.json()).revision,1);
   const current=await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}});
   assert.deepEqual((await current.json()).data,data);
+});
+
+test('sync API adds login credentials to an existing collection without replacing its workspace',async t=>{
+  const database=new DatabaseSync(':memory:');
+  const base=await startServer(t,{database});
+  const account=await post(base,'/api/auth/register');
+  const {token,user}=await account.json();
+  const data={collection:[{id:'SOR_005',foil:true,count:3}],decks:[{uid:'existing-deck'}]};
+  assert.equal((await putWorkspace(base,token,0,data)).status,200);
+  assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username:null});
+
+  const credentials=await post(base,'/api/auth/credentials',{username:'my.collection',password:'a-long-enough-password'},token);
+  assert.equal(credentials.status,200);
+  assert.deepEqual(await credentials.json(),{username:'my.collection'});
+  assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username:'my.collection'});
+  assert.equal((await post(base,'/api/auth/credentials',{username:'another.name',password:'a-long-enough-password'},token)).status,409);
+
+  const login=await post(base,'/api/auth/login',{username:'my.collection',password:'a-long-enough-password'});
+  assert.equal(login.status,200);
+  const newDevice=await login.json();
+  assert.equal(newDevice.user.id,user.id);
+  const workspace=await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+newDevice.token}});
+  assert.deepEqual((await workspace.json()).data,data);
+});
+
+test('sync API preserves existing device sessions and workspaces when adding credential columns',async t=>{
+  const database=new DatabaseSync(':memory:');
+  database.exec(`
+    PRAGMA foreign_keys=ON;
+    CREATE TABLE users(id INTEGER PRIMARY KEY,access_code_hash TEXT UNIQUE);
+    CREATE TABLE sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL);
+    CREATE TABLE pairing_codes(code_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,expires_at INTEGER NOT NULL);
+    CREATE TABLE workspaces(user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,data TEXT NOT NULL);
+    INSERT INTO users VALUES(1,NULL);
+    INSERT INTO workspaces VALUES(1,3,'2026-11-20T00:00:00.000Z','{"collection":[{"id":"SOR_005","foil":false,"count":4}],"decks":[]}');
+  `);
+  const token=Buffer.alloc(32,7).toString('base64url');
+  database.prepare('INSERT INTO sessions VALUES(?,?,?)').run(createHash('sha256').update(token).digest('hex'),1,Date.now()+60_000);
+  const base=await startServer(t,{database});
+  const existingWorkspace=await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}});
+  assert.equal(existingWorkspace.status,200);
+  assert.equal((await existingWorkspace.json()).revision,3);
+  const columns=database.prepare('PRAGMA table_info(users)').all().map(column=>column.name);
+  assert.ok(columns.includes('username')&&columns.includes('password_salt')&&columns.includes('password_hash'));
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM sessions').get().count,1);
 });
 
 test('sync API replaces unused pairing codes and rejects invalid workspace payloads',async t=>{
