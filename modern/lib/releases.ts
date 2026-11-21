@@ -1,6 +1,7 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 // Add each published release here. The Updates page displays the latest five.
 export const releases:Release[]=[
+ {version:'1.0.6',date:'2026-11-20',title:'A clearer card details panel',changes:['Refreshed card information and detail panels with clearer metadata, stats, and rules. Aspect indicators are now thin full-width bars, split evenly for multiple aspects.']},
  {version:'1.0.5',date:'2026-11-20',title:'Choose your home page',changes:['Set the startup and logo home page, keep Sync beside its status in a compact button, and place collection actions side by side on mobile.']},
  {version:'1.0.4',date:'2026-11-20',title:'Refresh site without signing out',changes:['Check for and apply web app updates from Options without clearing saved sign-in or collection data.']},
  {version:'1.0.3',date:'2026-11-20',title:'Quick sync status',changes:['Sync from the app header and see the last successful sync time and whether this device has local changes to sync.']},
