@@ -1,8 +1,8 @@
 import type {Card,Deck,Owned,FormatRules} from './model';
-export const PREMIER_RULES_DATE='2026-11-09';
+export const PREMIER_RULES_DATE='2026-11-20';
 export const PREMIER_RULES_URL='https://starwarsunlimited.com/articles/premier-format-update-november-2026';
 export const PREMIER_SUSPENDED=new Set(['ASH_011','ASH_052','ASH_079','ASH_248','SEC_179']);
-export const DEFAULT_FORMAT_RULES:FormatRules={date:PREMIER_RULES_DATE,premierSets:['JTL','LOF','IBH','SEC','LAW','ASH','HMW'],premierSuspended:[...PREMIER_SUSPENDED],eternalSuspended:[]};
+export const DEFAULT_FORMAT_RULES:FormatRules={date:PREMIER_RULES_DATE,premierSets:['JTL','LOF','IBH','SEC','LAW','ASH','HMW','IC27'],premierSuspended:[...PREMIER_SUSPENDED],eternalSuspended:[]};
 
 export function formatIssues(deck:Deck,byId:ReadonlyMap<string,Card>,premierIds:ReadonlySet<string>,format:'Premier'|'Eternal',rules:FormatRules=DEFAULT_FORMAT_RULES){
  const entries=[{id:deck.leader,count:1},{id:deck.base,count:1},...deck.deck,...deck.sideboard].filter(x=>x.id);
