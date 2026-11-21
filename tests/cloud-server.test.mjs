@@ -10,6 +10,7 @@ test('cloud server serves the app and authenticated API on one origin',async t=>
   const origins=[];
   const {server}=createCloudServer({
     database,
+    registrationCode:'test-invite',
     catalogPath:fileURLToPath(new URL('../public/catalog.json',import.meta.url)),
     root:fileURLToPath(new URL('../public/',import.meta.url)),
     hosts,
@@ -33,7 +34,7 @@ test('cloud server serves the app and authenticated API on one origin',async t=>
   assert.equal((await request('/manifest.webmanifest')).status,200);
   assert.equal((await request('/api/catalog',{headers:{Origin:origin}})).status,200);
   assert.equal((await request('/api/catalog',{headers:{Origin:'https://attacker.example.test'}})).status,403);
-  const account=await request('/api/auth/register',{method:'POST',headers:{Origin:origin}});
+  const account=await request('/api/auth/register',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({username:'cloud.user',password:'a-long-enough-password',inviteCode:'test-invite'})});
   assert.equal(account.status,201);
   const {token,user,...accountData}=await account.json();
   assert.equal(user.id,1);

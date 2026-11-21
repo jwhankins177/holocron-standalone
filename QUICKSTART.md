@@ -8,7 +8,7 @@ deployment serves the app and sync API together over one HTTPS origin.
 Install Node.js 24 or newer, then run:
 
 ```powershell
-npm install
+npm ci
 npm run build
 npm start
 ```
@@ -35,14 +35,24 @@ backup.
 4. Add a volume to the service, mount it at `/data`, and set the service
    variable `HOLOCRON_SYNC_DATABASE=/data/holocron-sync.sqlite`. The volume
    persists account workspaces across deployments. See [volumes](https://docs.railway.com/volumes).
-5. Review and deploy the staged changes. Open the public HTTPS domain when
+5. Set `HOLOCRON_REGISTRATION_CODE` to a long, random invite code and share it
+   privately with the people you want to allow to create accounts. New
+   registrations are disabled if this variable is empty. Existing accounts can
+   still sign in.
+6. Review and deploy the staged changes. Open the public HTTPS domain when
    deployment is healthy.
 
 If you use a custom domain, set `HOLOCRON_ALLOWED_HOSTS` to include both the
 Railway domain and custom hostname, and `HOLOCRON_ALLOWED_ORIGINS` to include
-both HTTPS origins, comma-separated. Set `HOLOCRON_TRUST_PROXY=true` so account
-rate limits use the client address provided by Railway. Review and deploy
-these variable changes as well.
+both HTTPS origins, comma-separated. Set `HOLOCRON_TRUST_PROXY=true` only if
+the proxy is configured to overwrite untrusted `X-Forwarded-For` values;
+otherwise leave it unset. Review and deploy these variable changes as well.
+The authentication rate limits are process-local; keep one app replica unless
+you add a shared rate-limit store or an edge-level limit.
+
+Each person should create a separate account and collection. Use the same
+credentials only across that person's own devices. A shared login gives every
+device full access to that account's collection.
 
 **Important:** This repository contains a legacy `railway.json`. Railway's
 current documentation says Config as Code is deprecated, existing services
@@ -86,6 +96,10 @@ workspace backup before resolving a conflict.
 - Keep using the same app URL and browser profile. Clearing browser site data
   removes the local workspace and device sign-in; use **Options → Refresh site**
   to apply app updates without clearing them.
+- The sync database and browser workspace are not encrypted by the app. Protect
+  each device with its OS screen lock and disk encryption, restrict access to
+  the Railway project, volume, and backups, and verify the host's at-rest
+  encryption and backup access settings.
 - Existing signed-in collections can add a username and password without
   replacing their cloud workspace.
 - Previously issued pairing codes and private codes remain accepted by the
@@ -93,6 +107,8 @@ workspace backup before resolving a conflict.
 - Legacy email/password accounts from versions before pairing-code sign-in are
   not migrated to this login; their stored cloud workspaces remain on the
   server but are not accessible through the current app.
+- **Play on ForceTable** sends the selected deck in an external link; the app
+  asks for confirmation before opening it.
 - Railway deploys code updates when changes reach its connected branch. The
   bundled rules remain snapshots; **Get latest card info** fetches current card
   data from SWU-DB and caches it on this device.
