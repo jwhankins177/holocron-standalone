@@ -80,6 +80,9 @@ workspace backup before resolving a conflict.
 - Pairing codes are short-lived and single-use. A signed-in device can generate
   another code whenever you need to connect a new device. Devices keep their
   own 30-day sign-in session and do not need the pairing code again to sync.
+- Keep using the same app URL and browser profile. Clearing browser site data
+  removes the local workspace and device sign-in; use **Options → Refresh site**
+  to apply app updates without clearing them.
 - Previously issued long private codes can be used once to reconnect; after
   that, generate one-time pairing codes for additional devices.
 - Existing email/password accounts are not migrated to pairing-code sign-in.
