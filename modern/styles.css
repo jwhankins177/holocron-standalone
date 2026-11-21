@@ -193,6 +193,17 @@ select option,select optgroup{background-color:#fff;color:var(--ink)}
 .missing-list-tools small{color:var(--muted)}
 
 .deck-tile-wrap .deck-delete{position:absolute;top:9px;left:9px;z-index:2;padding:6px 8px;font-size:11px}
+.header-sync-button{height:20px;min-height:20px;padding:0 10px;font-size:11px;line-height:1}
+.collection-actions button{min-width:0}
+.home-page-setting{display:grid;gap:6px}
+.home-page-setting select{max-width:100%}
+.home-page-setting small{color:var(--muted);font-size:10px}
+@media(max-width:600px){
+ .workspace-tools{flex-direction:row;align-items:center;justify-content:center}
+ .header-sync-button{width:auto}
+ .collection-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
+ .collection-actions button{white-space:normal;overflow-wrap:anywhere;padding:9px 6px}
+}
 .card-info{padding-top:7px}
 .card-info h3{margin-top:4px}
 .card-info footer{gap:4px;margin-top:6px;padding-top:6px}
