@@ -8,11 +8,12 @@ export function premierCards(cards: Card[], today = new Date(), rules:FormatRule
   const premierSets=new Set(rules.premierSets);
   const suspended=new Set(rules.premierSuspended);
   const iconsReleased = today >= new Date('2026-11-20T00:00:00');
-  const available = (card: Card) => card.set !== 'IC27' || iconsReleased;
+  const available = (card: Card) => card.set !== 'IC27' || (premierSets.has('IC27') && iconsReleased);
   const suspendedCores = new Set(cards.filter(card => suspended.has(card.id)).map(card => card.core));
   const legalCores = new Set(cards.filter(card =>
     deckCardTypes.has(card.type) &&
-    (premierSets.has(card.set) || card.set === 'IC27' && iconsReleased) &&
+    premierSets.has(card.set) &&
+    available(card) &&
     !suspendedCores.has(card.core)
   ).map(card => card.core));
   return new Set(cards.filter(card => available(card) && legalCores.has(card.core)).map(card => card.id));

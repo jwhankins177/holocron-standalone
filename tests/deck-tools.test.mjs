@@ -40,6 +40,21 @@ test('manual rules update changes Premier filtering and survives backup',()=>{
  assert.deepEqual(validateBackup(JSON.parse(createBackup({collection:[],decks:[deck],formatRules:rules}).text).data).formatRules,rules);
 });
 
+test('November 2026 Premier pool includes Icons only on release and keeps all suspensions',()=>{
+ const defaultPool=premierCards(catalog.cards,new Date('2026-11-21T00:00:00'),undefined);
+ const icons=catalog.cards.filter(card=>card.set==='IC27');
+ assert.ok(icons.length>0);
+ assert.ok(icons.filter(card=>['Leader','Base','Unit','Upgrade','Event'].includes(card.type)).every(card=>defaultPool.has(card.id)));
+ for(const id of ['ASH_011','ASH_052','ASH_079','ASH_248','SEC_179'])assert.equal(defaultPool.has(id),false,id);
+
+ const beforeRelease=premierCards(catalog.cards,new Date('2026-11-19T23:59:59'),undefined);
+ assert.equal(catalog.cards.filter(card=>card.set==='IC27').every(card=>!beforeRelease.has(card.id)),true);
+
+ const rules=validateFormatRules({date:'2026-11-21',premierSets:['JTL','LOF','IBH','SEC','LAW','ASH','HMW'],premierSuspended:[],eternalSuspended:[]});
+ const withoutIcons=premierCards(catalog.cards,new Date('2026-11-21T00:00:00'),rules);
+ assert.equal(catalog.cards.filter(card=>card.set==='IC27').every(card=>!withoutIcons.has(card.id)),true);
+});
+
 test('local restore points stay scoped to the workspace revision',()=>{
  const map=new Map(),storage={getItem:key=>map.get(key)??null,setItem:(key,value)=>map.set(key,value)};
  const point={at:'2026-11-09T00:00:00.000Z',label:'Deck change',before:{collection:[],decks:[makeDeck('one','One',1)]}};
