@@ -31,6 +31,10 @@ self.addEventListener('fetch',event=>{
 });
 
 self.addEventListener('message',event=>{
+ if(event.data==='skip-waiting'){
+  event.waitUntil(self.skipWaiting());
+  return;
+ }
  const client=event.ports[0];
  if(!client||!['status','install-art'].includes(event.data))return;
  event.waitUntil((async()=>{

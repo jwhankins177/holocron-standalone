@@ -1,6 +1,7 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 // Add each published release here. The Updates page displays the latest five.
 export const releases:Release[]=[
+ {version:'1.0.4',date:'2026-11-20',title:'Refresh site without signing out',changes:['Check for and apply web app updates from Options without clearing saved sign-in or collection data.']},
  {version:'1.0.3',date:'2026-11-20',title:'Quick sync status',changes:['Sync from the app header and see the last successful sync time and whether this device has local changes to sync.']},
  {version:'1.0.2',date:'2026-11-17',title:'Collection review controls',changes:['Review saved decisions from Collection Options. Closing a review or resolving an item clears the panel. The resolver can delete an imported item and all of its copies.']},
  {version:'1.0.1',date:'2026-11-17',title:'A distinct Standalone icon',changes:['The app header, browser tab, and installed app use a new icon. The header and Home Screen label identify this edition as Standalone.']},
