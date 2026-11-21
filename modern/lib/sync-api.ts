@@ -27,8 +27,8 @@ async function request<T>(base:string,path:string,token?:string,options:RequestI
  return response.json() as Promise<T>;
 }
 
-export function registerAccount(base:string,username:string,password:string){
- return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST',body:JSON.stringify({username,password})});
+export function registerAccount(base:string,username:string,password:string,inviteCode:string){
+ return request<{token:string;user:SyncUser}>(base,'/api/auth/register',undefined,{method:'POST',body:JSON.stringify({username,password,inviteCode})});
 }
 export function loginAccount(base:string,username:string,password:string){
  return request<{token:string;user:SyncUser}>(base,'/api/auth/login',undefined,{method:'POST',body:JSON.stringify({username,password})});
@@ -36,11 +36,14 @@ export function loginAccount(base:string,username:string,password:string){
 export function getSyncAccount(base:string,token:string){
  return request<SyncAccount>(base,'/api/auth/account',token);
 }
-export function setSyncAccountCredentials(base:string,token:string,username:string,password:string){
- return request<SyncAccount>(base,'/api/auth/credentials',token,{method:'POST',body:JSON.stringify({username,password})});
+export function setSyncAccountCredentials(base:string,token:string,username:string,password:string,inviteCode:string){
+ return request<SyncAccount>(base,'/api/auth/credentials',token,{method:'POST',body:JSON.stringify({username,password,inviteCode})});
 }
 export function logoutAccount(base:string,token:string){
  return request<{ok:boolean}>(base,'/api/auth/logout',token,{method:'POST'});
+}
+export function logoutAllAccounts(base:string,token:string){
+ return request<{ok:boolean}>(base,'/api/auth/logout-all',token,{method:'POST'});
 }
 export function getRemoteWorkspace(base:string,token:string){
  return request<RemoteWorkspace>(base,'/api/workspace',token);

@@ -6,7 +6,7 @@ import {createSyncServer} from '../sync-server.mjs';
 
 async function startServer(t,options={}) {
   const database=options.database||new DatabaseSync(':memory:');
-  const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test'],...options});
+  const {server}=createSyncServer({database,allowedOrigins:['https://app.example.test'],registrationCode:'test-invite',...options});
   await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve)});
   const base=`http://127.0.0.1:${server.address().port}`;
   t.after(()=>new Promise(resolve=>server.close(()=>{database.close();resolve()})));
@@ -24,11 +24,11 @@ async function putWorkspace(base,token,expectedRevision,data){
 test('sync API creates a collection, pairs a device once, and protects workspaces',async t=>{
   const database=new DatabaseSync(':memory:');
   const base=await startServer(t,{database});
-  assert.equal((await post(base,'/api/auth/register',{email:'old@example.test',password:'legacy-password'})).status,400);
-  assert.equal((await post(base,'/api/auth/register',{username:'ab',password:'short'})).status,400);
+  assert.equal((await post(base,'/api/auth/register',{email:'old@example.test',password:'legacy-password',inviteCode:'test-invite'})).status,400);
+  assert.equal((await post(base,'/api/auth/register',{username:'ab',password:'short',inviteCode:'test-invite'})).status,400);
   const username='collection.owner';
   const password='correct-horse-battery';
-  const account=await post(base,'/api/auth/register',{username,password});
+  const account=await post(base,'/api/auth/register',{username,password,inviteCode:'test-invite'});
   assert.equal(account.status,201);
   const {token,user,...accountData}=await account.json();
   assert.equal(user.id,1);
@@ -40,7 +40,7 @@ test('sync API creates a collection, pairs a device once, and protects workspace
   const signedInData=await signedIn.json();
   assert.equal(signedInData.user.id,user.id);
   assert.equal((await post(base,'/api/auth/login',{username,password:'wrong-password'})).status,401);
-  assert.equal((await post(base,'/api/auth/register',{username:'COLLECTION.OWNER',password})).status,409);
+  assert.equal((await post(base,'/api/auth/register',{username:'COLLECTION.OWNER',password,inviteCode:'test-invite'})).status,409);
   assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username});
   assert.equal((await fetch(base+'/api/workspace')).status,401);
   assert.equal((await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+token}})).status,404);
@@ -72,20 +72,46 @@ test('sync API creates a collection, pairs a device once, and protects workspace
   assert.deepEqual((await current.json()).data,data);
 });
 
+test('sync API disables registration without an invite and accepts the configured code',async t=>{
+  const disabledBase=await startServer(t,{registrationCode:''});
+  const credentials={username:'new.member',password:'a-long-enough-password',inviteCode:'test-invite'};
+  assert.equal((await post(disabledBase,'/api/auth/register',credentials)).status,503);
+
+  const base=await startServer(t);
+  assert.equal((await post(base,'/api/auth/register',{...credentials,inviteCode:undefined})).status,403);
+  assert.equal((await post(base,'/api/auth/register',{...credentials,inviteCode:'wrong-code'})).status,403);
+  assert.equal((await post(base,'/api/auth/register',credentials)).status,201);
+});
+
+test('separate accounts cannot read or overwrite each other’s collections',async t=>{
+  const base=await startServer(t);
+  const first=await (await post(base,'/api/auth/register',{username:'first.member',password:'a-long-enough-password',inviteCode:'test-invite'})).json();
+  const second=await (await post(base,'/api/auth/register',{username:'second.member',password:'a-long-enough-password',inviteCode:'test-invite'})).json();
+  const data={collection:[{id:'SOR_005',foil:false,count:2}],decks:[]};
+  assert.equal((await putWorkspace(base,first.token,0,data)).status,200);
+  assert.equal((await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+second.token}})).status,404);
+  assert.equal((await putWorkspace(base,second.token,0,{collection:[],decks:[]})).status,200);
+  const firstWorkspace=await fetch(base+'/api/workspace',{headers:{Authorization:'Bearer '+first.token}});
+  assert.deepEqual((await firstWorkspace.json()).data,data);
+});
+
 test('sync API adds login credentials to an existing collection without replacing its workspace',async t=>{
   const database=new DatabaseSync(':memory:');
   const base=await startServer(t,{database});
-  const account=await post(base,'/api/auth/register');
-  const {token,user}=await account.json();
+  const inserted=database.prepare('INSERT INTO users(access_code_hash) VALUES(NULL)').run();
+  const user={id:Number(inserted.lastInsertRowid)};
+  const token=Buffer.alloc(32,9).toString('base64url');
+  database.prepare('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)')
+    .run(createHash('sha256').update(token).digest('hex'),user.id,Date.now()+60_000);
   const data={collection:[{id:'SOR_005',foil:true,count:3}],decks:[{uid:'existing-deck'}]};
   assert.equal((await putWorkspace(base,token,0,data)).status,200);
   assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username:null});
 
-  const credentials=await post(base,'/api/auth/credentials',{username:'my.collection',password:'a-long-enough-password'},token);
+  const credentials=await post(base,'/api/auth/credentials',{username:'my.collection',password:'a-long-enough-password',inviteCode:'test-invite'},token);
   assert.equal(credentials.status,200);
   assert.deepEqual(await credentials.json(),{username:'my.collection'});
   assert.deepEqual(await (await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).json(),{username:'my.collection'});
-  assert.equal((await post(base,'/api/auth/credentials',{username:'another.name',password:'a-long-enough-password'},token)).status,409);
+  assert.equal((await post(base,'/api/auth/credentials',{username:'another.name',password:'a-long-enough-password',inviteCode:'test-invite'},token)).status,409);
 
   const login=await post(base,'/api/auth/login',{username:'my.collection',password:'a-long-enough-password'});
   assert.equal(login.status,200);
@@ -119,7 +145,7 @@ test('sync API preserves existing device sessions and workspaces when adding cre
 
 test('sync API replaces unused pairing codes and rejects invalid workspace payloads',async t=>{
   const base=await startServer(t);
-  const account=await post(base,'/api/auth/register');
+  const account=await post(base,'/api/auth/register',{username:'pairing.owner',password:'a-long-enough-password',inviteCode:'test-invite'});
   const {token}=await account.json();
   assert.equal((await post(base,'/api/auth/login',{code:'not-a-valid-code'})).status,401);
   const first=await (await post(base,'/api/auth/pairing-code',{},token)).json();
@@ -130,6 +156,17 @@ test('sync API replaces unused pairing codes and rejects invalid workspace paylo
   assert.equal((await post(base,'/api/auth/login',{code:second.code})).status,401);
   const invalid=await putWorkspace(base,token,0,{collection:'bad',decks:[]});
   assert.equal(invalid.status,400);
+});
+
+test('sync API can revoke every session for a collection',async t=>{
+  const base=await startServer(t);
+  const account=await post(base,'/api/auth/register',{username:'revoke.owner',password:'a-long-enough-password',inviteCode:'test-invite'});
+  const {token}=await account.json();
+  const secondSession=await post(base,'/api/auth/login',{username:'revoke.owner',password:'a-long-enough-password'});
+  const {token:secondToken}=await secondSession.json();
+  assert.equal((await post(base,'/api/auth/logout-all',{},token)).status,200);
+  assert.equal((await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+token}})).status,401);
+  assert.equal((await fetch(base+'/api/auth/account',{headers:{Authorization:'Bearer '+secondToken}})).status,401);
 });
 
 test('sync API accepts a previous private code once for reconnection',async t=>{
@@ -176,6 +213,12 @@ test('sync API restricts origins and exposes a cacheable public catalog',async t
   assert.match(catalog.headers.get('etag'),/^".+"$/);
   const cached=await fetch(base+'/api/catalog',{headers:{Origin:'https://app.example.test','If-None-Match':catalog.headers.get('etag')}});
   assert.equal(cached.status,304);
+});
+
+test('sync API rejects cross-origin requests when the origin allowlist is empty',async t=>{
+  const base=await startServer(t,{allowedOrigins:[]});
+  assert.equal((await fetch(base+'/api/catalog',{headers:{Origin:'https://app.example.test'}})).status,403);
+  assert.equal((await fetch(base+'/api/catalog')).status,200);
 });
 
 test('catalog refresh imports current SWU-DB data while preserving local printings',async t=>{

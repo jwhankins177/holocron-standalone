@@ -15,13 +15,14 @@ const allowedOrigins=(process.env.HOLOCRON_ALLOWED_ORIGINS||[
 
 export function createCloudServer({
   databasePath=process.env.HOLOCRON_SYNC_DATABASE||'./holocron-sync.sqlite',
+  registrationCode=process.env.HOLOCRON_REGISTRATION_CODE||'',
   catalogPath,
   database,
   root=fileURLToPath(new URL('./dist',import.meta.url)),
   hosts=allowedHosts,
   origins=allowedOrigins,
 }={}) {
-  const sync=createSyncServer({databasePath,catalogPath,database,allowedOrigins:origins});
+  const sync=createSyncServer({databasePath,catalogPath,database,registrationCode,allowedOrigins:origins});
   const staticHandler=createStaticHandler({root,allowedHosts:hosts});
   const server=createServer((request,response)=>{
     const pathname=new URL(request.url,'http://localhost').pathname;

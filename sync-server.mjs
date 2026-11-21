@@ -142,10 +142,14 @@ function validateWorkspace(value) {
 export function createSyncServer({
   databasePath = process.env.HOLOCRON_SYNC_DATABASE || './holocron-sync.sqlite',
   catalogPath = process.env.HOLOCRON_SYNC_CATALOG || defaultCatalog,
+  registrationCode = process.env.HOLOCRON_REGISTRATION_CODE || '',
   allowedOrigins = (process.env.HOLOCRON_ALLOWED_ORIGINS || 'http://127.0.0.1:41731,http://localhost:41731').split(',').map(value=>value.trim()).filter(Boolean),
   database = new DatabaseSync(databasePath),
   fetchImpl = globalThis.fetch,
 }={}) {
+  const registrationCodeHash=typeof registrationCode==='string'&&registrationCode.trim()
+    ?Buffer.from(digest(registrationCode.trim()),'hex')
+    :null;
   database.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS users (
@@ -218,9 +222,13 @@ export function createSyncServer({
     if (!session || session.expires_at <= Date.now()) return null;
     return {id:session.id};
   };
+  const hasValidRegistrationCode=value=>{
+    if(!registrationCodeHash||typeof value!=='string'||value.length>256)return false;
+    return timingSafeEqual(registrationCodeHash,Buffer.from(digest(value.trim()),'hex'));
+  };
   const handleRequest = async (request,response) => {
     const origin = request.headers.origin;
-    if (origin && allowedOrigins.length && !allowedOrigins.includes(origin)) return json(response,403,{error:'origin_not_allowed'});
+    if (origin && !allowedOrigins.includes(origin)) return json(response,403,{error:'origin_not_allowed'});
     const cors = origin ? {
       'Access-Control-Allow-Origin':origin,
       'Vary':'Origin',
@@ -261,26 +269,20 @@ export function createSyncServer({
       }
       if (pathname==='/api/auth/register' && request.method==='POST') {
         if (!limited('register:'+clientAddress(request))) return json(response,429,{error:'rate_limited'},cors);
-        let body={};
-        if(request.headers['content-type']){
-          body=await readBody(request);
-          if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
-        }
-        const hasCredentials=body.username!==undefined||body.password!==undefined;
-        if(request.headers['content-type']&&!hasCredentials)return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
-        let username=null,passwordSalt=null,passwordHash=null;
-        if(hasCredentials){
-          username=normalizeUsername(body.username);
-          if(!username)return json(response,400,{error:'invalid_username',message:'Use 3–32 letters, numbers, periods, underscores, or hyphens; start with a letter or number.'},cors);
-          if(!validPassword(body.password))return json(response,400,{error:'invalid_password',message:'Use a password between 8 and 128 characters.'},cors);
-          passwordSalt=randomBytes(16).toString('hex');
-          passwordHash=await hashPassword(body.password,Buffer.from(passwordSalt,'hex'));
-        }
+        if(!registrationCodeHash)return json(response,503,{error:'registration_disabled',message:'Account creation is not enabled. Contact the app owner.'},cors);
+        const body=await readBody(request);
+        if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username, password, and invite code.'},cors);
+        if(!hasValidRegistrationCode(body.inviteCode))return json(response,403,{error:'invalid_invite_code',message:'That invite code is invalid.'},cors);
+        const username=normalizeUsername(body.username);
+        if(!username)return json(response,400,{error:'invalid_username',message:'Use 3–32 letters, numbers, periods, underscores, or hyphens; start with a letter or number.'},cors);
+        if(!validPassword(body.password))return json(response,400,{error:'invalid_password',message:'Use a password between 8 and 128 characters.'},cors);
+        const passwordSalt=randomBytes(16).toString('hex');
+        const passwordHash=await hashPassword(body.password,Buffer.from(passwordSalt,'hex'));
         let result;
         try{
           result=database.prepare('INSERT INTO users(access_code_hash,username,password_salt,password_hash) VALUES(NULL,?,?,?)').run(username,passwordSalt,passwordHash);
         }catch(error){
-          if(database.prepare('SELECT 1 FROM users WHERE username=? COLLATE NOCASE').get(username||''))return json(response,409,{error:'username_taken',message:'That username is already in use.'},cors);
+          if(database.prepare('SELECT 1 FROM users WHERE username=? COLLATE NOCASE').get(username))return json(response,409,{error:'username_taken',message:'That username is already in use.'},cors);
           throw error;
         }
         const user={id:Number(result.lastInsertRowid)};
@@ -326,8 +328,10 @@ export function createSyncServer({
       }
       if(pathname==='/api/auth/credentials'&&request.method==='POST'){
         if(!user)return json(response,401,{error:'unauthorized'},cors);
+        if(!registrationCodeHash)return json(response,503,{error:'registration_disabled',message:'Account creation is not enabled. Contact the app owner.'},cors);
         const body=await readBody(request);
         if(!body||typeof body!=='object'||Array.isArray(body))return json(response,400,{error:'invalid_credentials',message:'Enter a username and password.'},cors);
+        if(!hasValidRegistrationCode(body.inviteCode))return json(response,403,{error:'invalid_invite_code',message:'That invite code is invalid.'},cors);
         const username=normalizeUsername(body.username);
         if(!username)return json(response,400,{error:'invalid_username',message:'Use 3–32 letters, numbers, periods, underscores, or hyphens; start with a letter or number.'},cors);
         if(!validPassword(body.password))return json(response,400,{error:'invalid_password',message:'Use a password between 8 and 128 characters.'},cors);
@@ -363,6 +367,11 @@ export function createSyncServer({
         if (!user) return json(response,401,{error:'unauthorized'},cors);
         const token=request.headers.authorization?.slice(7);
         if (token) database.prepare('DELETE FROM sessions WHERE token_hash=?').run(digest(token));
+        return json(response,200,{ok:true},cors);
+      }
+      if (pathname==='/api/auth/logout-all' && request.method==='POST') {
+        if (!user) return json(response,401,{error:'unauthorized'},cors);
+        database.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id);
         return json(response,200,{ok:true},cors);
       }
       if (pathname==='/api/workspace' && request.method==='GET') {
