@@ -63,3 +63,20 @@ dialog .detail-content .tags span{background:var(--panel-soft,var(--paper));bord
 @media(max-width:700px){.workspace-navigation .brand{padding:10px 6px;gap:6px;font-size:12px;letter-spacing:.4px;flex-shrink:1}.workspace-navigation .brand-icon{width:34px;height:34px}.workspace-navigation .brand small{font-size:5.5px;letter-spacing:.2px;margin-top:4px}}
 
 .workspace-navigation .brand img.standalone-icon{display:block;object-fit:cover;padding:0;border:0;border-radius:10px;background:#16193b;box-shadow:none}
+
+.options-popover{width:min(376px,calc(100vw - 24px));padding:12px;border-radius:12px;box-shadow:0 20px 52px #0009}
+.options-section{gap:5px;padding:11px 4px}
+.options-section>strong{padding:5px 9px;color:var(--gold);font-size:10px;font-weight:800;letter-spacing:1.15px}
+.workspace-navigation nav .options-section>button,.workspace-navigation nav .options-section>.favorite-button{min-height:40px;padding:9px 11px;border-radius:8px;font-size:12px;transition:background-color .16s ease,color .16s ease}
+.options-section .home-page-setting{display:grid;gap:7px;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft,#172a24);font-size:12px;font-weight:650}
+.options-section .home-page-setting select{width:100%;min-height:40px;margin:0}
+.options-section .home-page-setting small{color:var(--muted);font-size:10px;line-height:1.45}
+.options-section .highlight-options{gap:9px;padding:8px 4px}
+.workspace-navigation nav .highlight-mode button{min-height:40px;padding:8px 6px;border-radius:7px;font-size:11px;font-weight:650;transition:background-color .16s ease,border-color .16s ease,color .16s ease}
+.workspace-navigation nav .highlight-mode button[aria-pressed=true]{background:color-mix(in srgb,var(--gold) 13%,var(--panel-raised,#2d463b));border-color:var(--gold);color:var(--gold);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--gold) 18%,transparent)}
+.options-menu :is(summary,button,select):focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.options-popover::-webkit-scrollbar{width:8px}
+.options-popover::-webkit-scrollbar-thumb{border:2px solid transparent;border-radius:8px;background:color-mix(in srgb,var(--muted) 55%,transparent);background-clip:padding-box}
+.options-status{position:sticky;bottom:-12px;z-index:1;margin:4px -12px -4px;padding:11px 16px;border-top:1px solid var(--line);background:var(--panel,#20312a)}
+.options-version{padding:11px 4px 2px}
+@media(max-width:700px){.options-popover{width:min(376px,calc(100vw - 20px));padding:10px}.options-status{bottom:-10px;margin-inline:-10px;padding-inline:14px}}

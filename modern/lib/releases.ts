@@ -1,7 +1,7 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 // Add each published release here. The Updates page displays the latest five.
 export const releases:Release[]=[
- {version:'1.0.10',date:'2026-11-21',title:'Updated documentation',changes:['Expanded the local setup, deployment, backup, sync, security, and build documentation to match the current standalone app and server configuration.']},
+ {version:'1.0.10',date:'2026-11-21',title:'Options menu and documentation polish',changes:['Refined the Options menu spacing, section hierarchy, and control states for a clearer, more comfortable experience.','Expanded the local setup, deployment, backup, sync, security, and build documentation to match the current standalone app and server configuration.']},
  {version:'1.0.9',date:'2026-11-21',title:'Private account setup',changes:['Gate account creation with a private invite code, reject unlisted origins, allow revoking all device sessions, and confirm before sending a deck to ForceTable.']},
  {version:'1.0.8',date:'2026-11-21',title:'Sign in with a username and password',changes:['Use the same remembered account on every device. Add login credentials to an existing signed-in collection without replacing its cloud data.']},
  {version:'1.0.7',date:'2026-11-21',title:'Keep device sign-ins and local data',changes:['Ask browsers to preserve app storage and recognize equivalent sync-server URLs so an existing device sign-in is not discarded unnecessarily.']},
