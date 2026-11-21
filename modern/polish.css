@@ -22,6 +22,31 @@ dialog .detail-content .rules-text{font-size:14px;line-height:1.75;white-space:p
 @media(max-width:650px){dialog .detail-dialog{display:flex;flex-direction:column;border-radius:16px;max-height:94dvh}dialog .detail-art{padding:30px 28px 20px;border-right:0;border-bottom:1px solid var(--line)}dialog .detail-art .art{max-width:300px}dialog .detail-content{padding:24px 20px}dialog .detail-content h2{font-size:28px}dialog .detail-content .rules-text{padding:13px;font-size:14px}dialog .detail-art .actions button{min-height:40px}dialog .detail-dialog>.close{right:10px;top:10px}}
 dialog .detail-art{justify-content:flex-start;align-self:start;position:sticky;top:0} @media(max-width:650px){dialog .detail-art{position:static;align-self:stretch}}
 
+.card-tile{display:flex;flex-direction:column}
+.card-info{display:flex;flex:1;flex-direction:column;gap:0;min-width:0;margin-top:10px;padding:13px 13px 0;overflow:hidden;border:1px solid var(--line);border-radius:13px;background:var(--panel,#1b3028);box-shadow:0 6px 18px #0000000c}
+.card-info>div:first-child{display:contents}
+.card-info .card-code{order:0;color:var(--muted);font-size:9px;letter-spacing:.5px}
+.card-info h3{order:1;margin:9px 0 3px;color:var(--ink);font-size:15px;line-height:1.25;white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;min-height:2.5em}
+.card-info p{order:2;margin:0;color:var(--muted);font-size:11px;line-height:1.4;white-space:normal;min-height:1.4em}
+.card-info footer{order:3;justify-content:flex-start;flex-wrap:wrap;gap:6px;margin-top:10px;padding:10px 0 0;border-top:1px solid var(--line)}
+.card-info footer button{min-height:30px;padding:6px 8px;border-radius:8px;font-size:10px}
+.card-info .card-ownership{order:0;flex-basis:100%;margin-bottom:2px;color:var(--muted);font-size:10px}
+.card-info>.card-membership{order:4;margin:8px 0 2px}
+.card-info .dots{order:5;display:flex;flex:none;width:calc(100% + 26px);height:5px;max-width:none;gap:0;flex-wrap:nowrap;margin:auto -13px 0;overflow:hidden;border-radius:0 0 12px 12px;background:var(--line)}
+.card-info .dots>span{width:auto;height:100%;flex:1 1 0;border-radius:0;box-shadow:none}
+dialog .detail-content{display:flex;flex-direction:column;background:linear-gradient(165deg,var(--panel,#1b3028),var(--panel-raised,#263c31))}
+dialog .detail-content .eyebrow{width:max-content;max-width:100%;padding:5px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel-soft,var(--paper));overflow-wrap:anywhere}
+dialog .detail-content>.dots{order:10;display:flex;flex:none;width:100%;height:6px;gap:0;margin:20px 0 0;overflow:hidden;border-radius:999px;background:var(--line)}
+dialog .detail-content>.dots>span{width:auto;height:100%;flex:1 1 0;border-radius:0;box-shadow:none}
+dialog .detail-content .detail-stats>span{background:var(--panel-soft,var(--paper));box-shadow:inset 0 1px 0 #ffffff0a}
+dialog .detail-content .rules-text{border-left:3px solid var(--gold);background:var(--panel-soft,var(--paper));box-shadow:0 6px 18px #0000000a}
+dialog .detail-content .tags span{background:var(--panel-soft,var(--paper));border-radius:999px;padding:6px 10px}
+@media(max-width:650px){
+ .card-info{padding-inline:10px}
+ .card-info .dots{width:calc(100% + 20px);margin-inline:-10px}
+ dialog .detail-content>.dots{margin-top:16px}
+}
+
 /* Paint the ring above image descendants, not behind their opaque artwork. */
 .art[data-highlight=outline],.card-preview-art[data-highlight=outline],.art[data-highlight=glow],.card-preview-art[data-highlight=glow]{outline:none}
 [data-highlight]>.art-face,[data-highlight]>img{position:relative;z-index:0}

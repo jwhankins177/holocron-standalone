@@ -63,7 +63,7 @@ async function download(name:string,data:string){
  try{return await nativeCall('export',{name,data})}
  catch(error){alert(error instanceof Error ? error.message : 'Unable to save the file');return false}
 }
-function Dots({values}:{values:string[]}){return <span className="dots">{orderedAspects(values).map((a,i)=><span key={a+i} title={a} style={{background:colors[a]||'#aaa'}}/>)}</span>}
+function Dots({values}:{values:string[]}){const aspects=orderedAspects(values);return <span className="dots" role="img" aria-label={aspects.length?'Aspects: '+aspects.join(', '):'No aspects'}>{aspects.map((a,i)=><span key={a+i} title={a} style={{background:colors[a]||'#aaa'}}/>)}</span>}
 function Art({card,back=false,onClick}:{card:Card;back?:boolean;onClick?:()=>void}){const {highlight,style:highlightStyle}=useCardHighlight(card);const [failed,setFailed]=useState(false);useEffect(()=>setFailed(false),[card.id,back]);return <div data-highlight={highlight?highlightStyle:undefined} style={highlight?{'--highlight-color':highlight.color} as React.CSSProperties:undefined} title={highlight?.label} data-rarity={card.rarity} className={'art '+(['Leader','Base'].includes(card.type)&&!back?'horizontal':'')} onClick={onClick}><HighlightBadge highlight={highlight}/>{!failed?<span className="art-face"><img loading="lazy" src={back&&card.back?card.back:card.image} alt={label(card)+(back?' — reverse':'')} onError={()=>setFailed(true)}/></span>:<div className="art-fallback"><Box size={28}/><strong>{card.name}</strong><p>{card.text}</p><small>Artwork unavailable · {card.id}</small></div>}</div>}
 function CardKindPicker({value,onChange}:{value:string[];onChange:(next:string[])=>void}){
  const selected=cardKindOptions.filter(option=>value.includes(option.value));
