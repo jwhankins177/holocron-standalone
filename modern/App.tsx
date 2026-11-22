@@ -32,7 +32,7 @@ import {loadLocal,saveLocal,WorkspaceConflict} from './lib/local-store';
 import {cacheCatalog,readCachedCatalog} from './lib/catalog-store';
 import {CardValueLabel,CardValueProvider,useCardValues,ValueSummary} from './lib/card-values';
 import {explainSyncError,getRemoteCatalog,getRemoteWorkspace,getSyncAccount,loginAccount,logoutAccount,logoutAllAccounts,normalizeSyncUrl,putRemoteWorkspace,refreshRemoteCatalog,registerAccount,setSyncAccountCredentials,validateCatalog} from './lib/sync-api';
-import {readSyncSession} from './lib/sync-session';
+import {elapsedSync,readSyncSession} from './lib/sync-session';
 import {affectedDecks,elapsedBackup} from './lib/workspace-extras';
 import {validatePlayRecords} from './lib/play-records';
 import {syncSnapshot} from './lib/workspace-sync';
@@ -703,7 +703,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
  const hasLocalSyncChanges=syncStatus!==null&&(revision.current!==syncStatus.localRevision||!!pending.current||saving.current);
  const headerSyncState=!syncToken?'disconnected':!loaded?'checking':remoteConflict||syncFailed?'conflict':!syncStatus?'never':hasLocalSyncChanges?'pending':'synced';
  const headerSyncLabel=headerSyncState==='disconnected'?'Not connected':headerSyncState==='checking'?'Checking…':headerSyncState==='conflict'?'Needs attention':headerSyncState==='never'?'Not synced yet':headerSyncState==='pending'?'Changes not synced':'In sync';
- const lastSyncedLabel=syncStatus?new Date(syncStatus.lastSyncedAt).toLocaleString():'Never';
+ const lastSyncedLabel=elapsedSync(syncStatus?.lastSyncedAt||null);
  return <CardValueProvider value={cardValues}><HighlightProvider value={{settings:cardHighlights,context:{premierIds,ownedByCore:owned,deckCores}}}><div className="shell"><header className="workspace-header">
   <div className="workspace-navigation"><button className="brand" aria-label="Holocron Standalone home" onClick={()=>nav(homePage)}><img className="brand-icon standalone-icon" src="./standalone-icon-192.png" alt="" width={44} height={44}/><span>HOLOCRON<small>STANDALONE</small><small className="site-version">v{APP_VERSION}</small></span></button><nav aria-label="Workspace">
    <button className={tab==='collection'?'selected':''} aria-current={tab==='collection'?'page':undefined} onClick={()=>nav('collection')}><Library size={19}/>My collection<span>{count(workspace.collection).toLocaleString()}</span></button>
@@ -726,7 +726,7 @@ const revision=useRef(0),pending=useRef<Workspace|null>(null),saving=useRef(fals
   <div className="workspace-tools">
    <button className="primary header-sync-button" aria-label="Sync workspace" disabled={syncBusy||!!syncToken&&(!loaded||!!pending.current||saving.current)} onClick={openHeaderSync}><RotateCw size={12}/>{syncBusy?'Working…':'Sync'}</button>
    <div className="workspace-sync-status" data-state={headerSyncState} title="In-sync status reflects the last successful sync. Press Sync to check for changes from another device.">
-    <strong className="workspace-sync-state">{headerSyncLabel}</strong><span>Last synced: {lastSyncedLabel}</span>
+    <strong className="workspace-sync-state">{headerSyncLabel}</strong><span title={syncStatus?new Date(syncStatus.lastSyncedAt).toLocaleString():undefined}>Last synced: {lastSyncedLabel}</span>
    </div>
   </div>
  </header>

@@ -1,6 +1,7 @@
 export type Release={version:string;date:string;title:string;changes:string[]};
 // Add each published release here. The Updates page displays the latest five.
 export const releases:Release[]=[
+ {version:'0.1.2',date:'2026-11-21',title:'At-a-glance sync',changes:['See how long ago this device last synced and enjoy a refreshed Standalone icon that matches the app theme.']},
  {version:'0.1.1',date:'2026-11-21',title:'Optional card values',changes:['Show estimated card values and a partial collection total using a configured personal TCG API account.']},
  {version:'0.1.0',date:'2026-11-21',title:'Alpha release',changes:['First alpha release of Holocron Standalone.']},
  {version:'1.0.11',date:'2026-11-21',title:'Premier rules audit',changes:['Updated the Premier card pool for Icons 2027 Edition, kept the Cad Bane and November 2026 suspensions current, and added release-date and rules-set coverage for the Premier-only filter and highlight tag.']},

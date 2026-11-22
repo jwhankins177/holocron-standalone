@@ -62,7 +62,7 @@ dialog .detail-content .tags span{background:var(--panel-soft,var(--paper));bord
 .workspace-navigation .brand small{display:block;margin-top:5px;line-height:1.4;white-space:nowrap}
 @media(max-width:700px){.workspace-navigation .brand{padding:10px 6px;gap:6px;font-size:12px;letter-spacing:.4px;flex-shrink:1}.workspace-navigation .brand-icon{width:34px;height:34px}.workspace-navigation .brand small{font-size:5.5px;letter-spacing:.2px;margin-top:4px}}
 
-.workspace-navigation .brand img.standalone-icon{display:block;object-fit:cover;padding:0;border:0;border-radius:10px;background:#16193b;box-shadow:none}
+.workspace-navigation .brand img.standalone-icon{display:block;object-fit:cover;padding:0;border:0;border-radius:10px;background:#123b39;box-shadow:none}
 
 .options-popover{width:min(376px,calc(100vw - 24px));padding:12px;border-radius:12px;box-shadow:0 20px 52px #0009}
 .options-section{gap:5px;padding:11px 4px}
