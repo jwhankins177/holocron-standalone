@@ -94,9 +94,10 @@ export const defaultQuickFilters: QuickFilter[] = [
 ];
 
 export function validateCardDisplay(settings: Record<string, unknown>) {
-  const {rarityBorders, cardSort, quickFilters, highlight} = settings;
+  const {rarityBorders, cardSort, quickFilters, highlight, showCardValues} = settings;
   const validatedHighlight=highlight===undefined?undefined:validateHighlightSettings(highlight);
   if (rarityBorders !== undefined && typeof rarityBorders !== 'boolean') throw Error('Invalid rarity border setting');
+  if (showCardValues !== undefined && typeof showCardValues !== 'boolean') throw Error('Invalid card value setting');
   if (cardSort !== undefined && (!Array.isArray(cardSort) || !cardSort.length || cardSort.length > 2 ||
     cardSort.some(rule => !rule || !Object.hasOwn(sortLabels, rule.key) || !['asc', 'desc'].includes(rule.direction)) ||
     new Set(cardSort.map(rule => rule.key)).size !== cardSort.length)) throw Error('Invalid card sort');
@@ -110,6 +111,7 @@ export function validateCardDisplay(settings: Record<string, unknown>) {
     new Set(quickFilters.map(preset => preset.id)).size !== quickFilters.length)) throw Error('Invalid quick filters');
   return {
     ...(rarityBorders !== undefined && {rarityBorders}),
+    ...(showCardValues !== undefined && {showCardValues}),
     ...(validatedHighlight !== undefined && {highlight:validatedHighlight}),
     ...(cardSort !== undefined && {cardSort: cardSort as SortRule[]}),
     ...(quickFilters !== undefined && {quickFilters: quickFilters as QuickFilter[]}),

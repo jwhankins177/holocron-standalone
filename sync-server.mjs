@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {promisify} from 'node:util';
 import {fileURLToPath} from 'node:url';
+import {createCardValueService} from './card-values.mjs';
 
 const defaultCatalog = fileURLToPath(new URL('./public/catalog.json', import.meta.url));
 const tokenLifetime = 30 * 24 * 60 * 60 * 1000;
@@ -146,6 +147,7 @@ export function createSyncServer({
   allowedOrigins = (process.env.HOLOCRON_ALLOWED_ORIGINS || 'http://127.0.0.1:41731,http://localhost:41731').split(',').map(value=>value.trim()).filter(Boolean),
   database = new DatabaseSync(databasePath),
   fetchImpl = globalThis.fetch,
+  cardValue = createCardValueService({catalogPath,fetchImpl}),
 }={}) {
   const registrationCodeHash=typeof registrationCode==='string'&&registrationCode.trim()
     ?Buffer.from(digest(registrationCode.trim()),'hex')
@@ -321,6 +323,11 @@ export function createSyncServer({
         return json(response,401,{error:'invalid_credentials',message:'Username or password is incorrect.'},cors);
       }
       const user=authorize(request);
+      if(pathname==='/api/card-value'&&request.method==='GET'){
+        if(!user)return json(response,401,{error:'unauthorized'},cors);
+        const id=new URL(request.url,'http://localhost').searchParams.get('id');
+        return json(response,200,await cardValue(id),cors);
+      }
       if(pathname==='/api/auth/account'&&request.method==='GET'){
         if(!user)return json(response,401,{error:'unauthorized'},cors);
         const account=database.prepare('SELECT username FROM users WHERE id=?').get(user.id);

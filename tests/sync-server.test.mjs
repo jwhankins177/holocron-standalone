@@ -21,6 +21,22 @@ async function putWorkspace(base,token,expectedRevision,data){
   return fetch(base+'/api/workspace',{method:'PUT',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({expectedRevision,data})});
 }
 
+test('hosted card values require authentication and surface provider errors',async t=>{
+  const base=await startServer(t,{cardValue:async id=>{
+    if(id==='SOR_429')throw Object.assign(Error('Daily limit reached.'),{status:429});
+    return {id};
+  }});
+  assert.equal((await fetch(base+'/api/card-value?id=SOR_059')).status,401);
+  const account=await (await post(base,'/api/auth/register',{username:'price.user',password:'a-long-enough-password',inviteCode:'test-invite'})).json();
+  const headers={Authorization:'Bearer '+account.token};
+  const value=await fetch(base+'/api/card-value?id=SOR_059',{headers});
+  assert.equal(value.status,200);
+  assert.deepEqual(await value.json(),{id:'SOR_059'});
+  const quota=await fetch(base+'/api/card-value?id=SOR_429',{headers});
+  assert.equal(quota.status,429);
+  assert.equal((await quota.json()).message,'Daily limit reached.');
+});
+
 test('sync API creates a collection, pairs a device once, and protects workspaces',async t=>{
   const database=new DatabaseSync(':memory:');
   const base=await startServer(t,{database});

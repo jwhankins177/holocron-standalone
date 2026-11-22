@@ -257,3 +257,6 @@ select option,select optgroup{background-color:#fff;color:var(--ink)}
 .card-kind-picker input[type=checkbox]{accent-color:var(--gold)}
 .card-kind-picker>div button{font-size:11px;text-align:left}
 @media(max-width:600px){.card-kind-picker{min-width:145px;flex:1}.card-kind-picker>div{left:0;right:auto}}
+.card-value-label{display:block;font-size:.75rem;line-height:1.35;margin:.3rem 0;color:inherit}
+.card-values-summary{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;margin:1rem 0;padding:1rem;border:1px solid currentColor;border-radius:.6rem}
+.card-values-summary p{flex-basis:100%;margin:0;font-size:.85rem}
