@@ -3,6 +3,7 @@ import {stat} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {extname, resolve, sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {createCardValueService} from './card-values.mjs';
 
 const types = new Map(Object.entries({
   '.html':'text/html; charset=utf-8',
@@ -24,11 +25,25 @@ function fail(response, status, message) {
 export function createStaticHandler({
   root=fileURLToPath(new URL('./dist',import.meta.url)),
   allowedHosts=new Set((process.env.HOLOCRON_ALLOWED_HOSTS||'127.0.0.1:41731,localhost:41731').split(',').map(value=>value.trim().toLowerCase()).filter(Boolean)),
+  cardValue=createCardValueService(),
 }={}) {
   const staticRoot=resolve(root);
   return async (request,response) => {
     if (!allowedHosts.has(String(request.headers.host||'').toLowerCase())) return fail(response,400,'Invalid host');
     if (!['GET','HEAD'].includes(request.method)) return fail(response,405,'Method unavailable');
+    const url=new URL(request.url,'http://localhost');
+    if(url.pathname==='/api/card-value'&&request.method==='GET'){
+      const origin=request.headers.origin;
+      if(request.headers['x-holocron-request']!=='1'||origin&&origin!==`http://${request.headers.host}`)return fail(response,403,'Forbidden');
+      try{
+        const value=await cardValue(url.searchParams.get('id'));
+        response.writeHead(200,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+        return response.end(JSON.stringify(value));
+      }catch(error){
+        response.writeHead(error.status||500,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});
+        return response.end(JSON.stringify({message:error.status?error.message:'Unable to retrieve card values.'}));
+      }
+    }
     let path;
     try {
       const pathname=decodeURIComponent(new URL(request.url,'http://localhost').pathname);

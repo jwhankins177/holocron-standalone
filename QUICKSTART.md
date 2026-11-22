@@ -19,6 +19,30 @@ The app and bundled catalog work offline. Changes are saved in the browser
 profile; use **Options → Backup workspace** to keep an independent JSON
 backup.
 
+## Optional card values (personal proof of concept)
+
+Create a free account at https://tcgapi.dev/ and configure `TCG_API_KEY` in the
+environment of the Holocron server before starting it. Do not put the key in
+the repository, a browser setting, or a backup. For Railway, add it as a
+service variable and redeploy. Hosted users must sign in to use card values.
+Turn on **Options → Show card values**, then choose **Check owned card values**
+in My collection; individual cards also have a **Check value** button.
+
+Values are USD estimates, not appraisals. The provider may mislabel finishes,
+so its labels are shown as reported and missing or mismatched finishes are
+excluded from the collection total. The free account is limited to 100 API
+requests per day and may need multiple days to cover a collection. The app
+caches checked prices on this device for offline use and does not refresh them
+more than once per 24 hours. Some sets or printings cannot be matched and are
+shown as unavailable.
+
+This integration is intended for personal, noncommercial use. Before broader
+or commercial use, review the provider's current license, marketplace rights,
+pricing, and redistribution restrictions. The provider's license requires
+removing cached provider records after its license ends; use **Clear saved
+values** in My collection on every device and restart the server to clear its
+in-memory cache when required.
+
 ## Deploy on Railway
 
 1. In Railway, create a project from this GitHub repository and connect the
